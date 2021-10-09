@@ -14,6 +14,8 @@
 #ifndef _LINUX_SERIAL_REG_H
 #define _LINUX_SERIAL_REG_H
 
+#include <linux/config.h>
+
 #define UART_RX		0	/* In:  Receive buffer (DLAB=0) */
 #define UART_TX		0	/* Out: Transmit buffer (DLAB=0) */
 #define UART_DLL	0	/* Out: Divisor Latch Low (DLAB=1) */
@@ -228,6 +230,47 @@
 #define UART_TRG_96	0x60
 #define UART_TRG_120	0x78
 #define UART_TRG_128	0x80
+
+#ifdef CONFIG_PC9800
+
+#define RX_8251F	0x130	/* In: Receive buffer */
+#define TX_8251F	0x130	/* Out: Transmit buffer */
+#define LSR_8251F	0x132	/* In: Line Status Register */
+#define MSR_8251F	0x134	/* In: Modem Status Register */
+#define IIR_8251F	0x136	/* In: Interrupt ID Register */
+#define FCR_8251F	0x138	/* I/O: FIFO Control Register */
+#define IER2_8251F	0x138	/* I/O: Interrupt Enable Register */
+#define VFAST_8251F	0x13a	/* I/O: VFAST mode Register */
+
+#define COMMAND_8251F	0x32	/* Out: 8251 Command Resister */
+#define IER1_8251F	0x35	/* I/O: Interrupt Enable Register */
+#define IER1_8251F_COUT	0x37	/* Out: Interrupt Enable Register */
+
+#define COMMAND_8251F_DUMMY 0	/* Dummy Command */
+#define COMMAND_8251F_RESET 0x40 /* Reset Command */
+
+#define VFAST_ENABLE	0x80	/* V.Fast mode Enable */
+
+/* Interrupt Reason */
+#define INTR_8251_TXRE	4
+#define INTR_8251_TXEE	2
+#define INTR_8251_RXRE	1
+/* I/O Port */
+#define PORT_8251_DATA	0
+#define PORT_8251_CMD	2
+#define PORT_8251_MOD	2
+#define PORT_8251_STS	2
+/* status in */
+#define STAT_8251_TXRDY	1
+#define STAT_8251_RXRDY	2
+#define STAT_8251_TXEMP	4
+#define STAT_8251_PER	8
+#define STAT_8251_OER	16
+#define STAT_8251_FER	32
+#define STAT_8251_BRK	64
+#define STAT_8251_DSR	128
+
+#endif /* CONFIG_PC9800 */
 
 /*
  * These definitions are for the RSA-DV II/S card, from

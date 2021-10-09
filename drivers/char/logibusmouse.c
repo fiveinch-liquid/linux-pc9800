@@ -36,6 +36,7 @@
  *   Russell King <rmk@arm.uk.linux.org>
  */
 
+#include <linux/config.h>
 #include <linux/module.h>
 
 #include <linux/kernel.h>
@@ -128,6 +129,11 @@ static struct busmouse busmouse = {
 
 static int __init logi_busmouse_init(void)
 {
+#ifndef CONFIG_LOGIBUSMOUSE_PC9800
+	/* For PC-9800,  necessary I/O ports are already reserved by
+	   arch/i386/kernel/setup.c since mouse interface ALWAYS
+	   exist on PC-9800.  */
+
 	if (check_region(LOGIBM_BASE, LOGIBM_EXTENT))
 		return -EIO;
 
@@ -136,11 +142,19 @@ static int __init logi_busmouse_init(void)
 	udelay(100L);	/* wait for reply from mouse */
 	if (inb(MSE_SIGNATURE_PORT) != MSE_SIGNATURE_BYTE)
 		return -EIO;
+#endif
 
 	outb(MSE_DEFAULT_MODE, MSE_CONFIG_PORT);
 	MSE_INT_OFF();
 	
+#ifdef CONFIG_LOGIBUSMOUSE_PC9800
+	outb(MSE_DEFAULT_TIMER_VAL, MSE_TIMER_PORT);
+#endif
+
 	request_region(LOGIBM_BASE, LOGIBM_EXTENT, "busmouse");
+#ifdef CONFIG_LOGIBUSMOUSE_PC9800
+	request_region(MSE_TIMER_PORT, 1, "busmouse");
+#endif
 
 	msedev = register_busmouse(&busmouse);
 	if (msedev < 0)
@@ -154,6 +168,9 @@ static void __exit logi_busmouse_cleanup (void)
 {
 	unregister_busmouse(msedev);
 	release_region(LOGIBM_BASE, LOGIBM_EXTENT);
+#ifdef CONFIG_LOGIBUSMOUSE_PC9800
+	release_region(MSE_TIMER_PORT, 1);
+#endif
 }
 
 module_init(logi_busmouse_init);

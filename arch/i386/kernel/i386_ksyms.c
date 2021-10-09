@@ -32,9 +32,11 @@
 extern void dump_thread(struct pt_regs *, struct user *);
 extern spinlock_t rtc_lock;
 
+#ifndef CONFIG_PC9800
 #if defined(CONFIG_APM) || defined(CONFIG_APM_MODULE)
 extern void machine_real_restart(unsigned char *, int);
 EXPORT_SYMBOL(machine_real_restart);
+#endif
 #endif
 
 #ifdef CONFIG_SMP
@@ -54,7 +56,9 @@ EXPORT_SYMBOL(boot_cpu_data);
 #ifdef CONFIG_EISA
 EXPORT_SYMBOL(EISA_bus);
 #endif
+#ifndef CONFIG_PC9800
 EXPORT_SYMBOL(MCA_bus);
+#endif
 EXPORT_SYMBOL(__verify_write);
 EXPORT_SYMBOL(dump_thread);
 EXPORT_SYMBOL(dump_fpu);

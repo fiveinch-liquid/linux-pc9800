@@ -181,6 +181,7 @@ static int __init reboot_setup(char *str)
 
 __setup("reboot=", reboot_setup);
 
+#ifndef CONFIG_PC9800
 /* The following code and data reboots the machine by switching to real
    mode and jumping to the BIOS reset entry point, as if the CPU has
    really been reset.  The previous version asked the keyboard
@@ -250,7 +251,9 @@ static inline void kb_wait(void)
 		if ((inb_p(0x64) & 0x02) == 0)
 			break;
 }
+#endif /* !CONFIG_PC9800 */
 
+#ifndef CONFIG_PC9800
 /*
  * Switch to real mode and then execute the code
  * specified by the code and length parameters.
@@ -342,6 +345,7 @@ void machine_real_restart(unsigned char *code, int length)
 				:
 				: "i" ((void *) (0x1000 - sizeof (real_mode_switch) - 100)));
 }
+#endif
 
 void machine_restart(char * __unused)
 {
@@ -354,6 +358,7 @@ void machine_restart(char * __unused)
 	disable_IO_APIC();
 #endif
 
+#ifndef CONFIG_PC9800
 	if(!reboot_thru_bios) {
 		/* rebooting needs to touch the page at absolute addr 0 */
 		*((unsigned short *)__va(0x472)) = reboot_mode;
@@ -372,6 +377,16 @@ void machine_restart(char * __unused)
 	}
 
 	machine_real_restart(jump_to_bios, sizeof(jump_to_bios));
+#else /* CONFIG_PC9800 */
+	*((unsigned short *)__va(0x472)) = reboot_mode;
+	for (;;) {
+		outb (0, 0xf0);		/* signal CPU reset */
+		mdelay (1);
+		/* 0xf0 didn't work - force a triple fault.. */
+		__asm__ __volatile__ ("lidt %0": :"m" (no_idt));
+		__asm__ __volatile__ ("int3");
+	}
+#endif /* !CONFIG_PC9800 */
 }
 
 void machine_halt(void)

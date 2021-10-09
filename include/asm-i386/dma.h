@@ -10,6 +10,9 @@
 
 #include <linux/config.h>
 #include <linux/spinlock.h>	/* And spinlocks */
+#ifdef CONFIG_PC9800
+#include <asm/pc9800_dma.h>
+#else /* !CONFIG_PC9800 */
 #include <asm/io.h>		/* need byte IO */
 #include <linux/delay.h>
 
@@ -72,8 +75,10 @@
 
 #define MAX_DMA_CHANNELS	8
 
+#ifndef CONFIG_PC9800
 /* The maximum address that we can perform a DMA transfer to on this platform */
 #define MAX_DMA_ADDRESS      (PAGE_OFFSET+0x1000000)
+#endif
 
 /* 8237 DMA controllers */
 #define IO_DMA1_BASE	0x00	/* 8 bit slave DMA, channels 0..3 */
@@ -294,5 +299,7 @@ extern int isa_dma_bridge_buggy;
 #else
 #define isa_dma_bridge_buggy 	(0)
 #endif
+
+#endif /* CONFIG_PC9800 */
 
 #endif /* _ASM_DMA_H */

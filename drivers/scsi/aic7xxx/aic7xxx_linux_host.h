@@ -44,7 +44,9 @@ int		 ahc_linux_bus_reset(Scsi_Cmnd *);
 int		 ahc_linux_dev_reset(Scsi_Cmnd *);
 int		 ahc_linux_abort(Scsi_Cmnd *);
 
-#if defined(__i386__)
+#include <linux/config.h>
+
+#if defined(__i386__) && !defined(CONFIG_PC9800)
 #  define AIC7XXX_BIOSPARAM ahc_linux_biosparam
 #else
 #  define AIC7XXX_BIOSPARAM NULL

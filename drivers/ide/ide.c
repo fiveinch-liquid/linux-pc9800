@@ -1296,6 +1296,9 @@ static void ide_do_request(ide_hwgroup_t *hwgroup, int masked_irq)
 	ide_drive_t	*drive;
 	ide_hwif_t	*hwif;
 	ide_startstop_t	startstop;
+#ifdef CONFIG_PC9800_NOTDEF
+	int idebank;
+#endif
 
 	ide_get_lock(&ide_lock, ide_intr, hwgroup);	/* for atari only: POSSIBLY BROKEN HERE(?) */
 
@@ -1336,6 +1339,11 @@ static void ide_do_request(ide_hwgroup_t *hwgroup, int masked_irq)
 			return;		/* no more work for this hwgroup (for now) */
 		}
 		hwif = HWIF(drive);
+#ifdef CONFIG_PC9800_NOTDEF
+		idebank = hwif->index;
+		pc9800_select_idebank(idebank);
+#endif
+
 		if (hwgroup->hwif->sharing_irq && hwif != hwgroup->hwif && hwif->io_ports[IDE_CONTROL_OFFSET]) {
 			/* set nIEN for previous hwif */
 			SELECT_INTERRUPT(hwif, drive);
@@ -1366,6 +1374,10 @@ static void ide_do_request(ide_hwgroup_t *hwgroup, int masked_irq)
 			enable_irq(hwif->irq);
 		if (startstop == ide_stopped)
 			hwgroup->busy = 0;
+#ifdef CONFIG_PC9800_NOTDEF
+		pc9800_unselect_idebank(idebank);
+#endif
+
 	}
 }
 
@@ -1912,12 +1924,29 @@ ide_proc_entry_t generic_subdriver_entries[] = {
  */
 void hwif_unregister (ide_hwif_t *hwif)
 {
+#ifdef CONFIG_PC9800
+	/* hwif->straight8 == 2 means PC-9800's even/odd I/O mapping */
+	if (hwif->straight8 != 1)
+		;
+	else
+#endif
 	if (hwif->straight8) {
 		ide_release_region(hwif->io_ports[IDE_DATA_OFFSET], 8);
 		goto jump_eight;
 	}
 	if (hwif->io_ports[IDE_DATA_OFFSET])
+#ifndef CONFIG_PC9800
 		ide_release_region(hwif->io_ports[IDE_DATA_OFFSET], 1);
+#else /* CONFIG_PC9800 */
+		ide_release_region(hwif->io_ports[IDE_DATA_OFFSET], 2);
+
+	if (hwif->straight8 == 2) {
+		ide_release_region(hwif->io_ports[IDE_ERROR_OFFSET],
+				   -((IDE_STATUS_OFFSET - IDE_ERROR_OFFSET)
+				     * 2 + 1));
+		goto jump_eight;
+	}
+#endif /* CONFIG_PC9800 */
 	if (hwif->io_ports[IDE_ERROR_OFFSET])
 		ide_release_region(hwif->io_ports[IDE_ERROR_OFFSET], 1);
 	if (hwif->io_ports[IDE_NSECTOR_OFFSET])
@@ -3196,6 +3225,12 @@ static void __init probe_for_hwifs (void)
 	}
 #endif /* CONFIG_PCI */
 
+#ifdef CONFIG_BLK_DEV_IDE_PC9800
+	{
+		extern void ide_probe_for_pc9800(void);
+		ide_probe_for_pc9800();
+	}
+#endif
 #ifdef CONFIG_BLK_DEV_CMD640
 	{
 		extern void ide_probe_for_cmd640x(void);
@@ -3282,6 +3317,10 @@ void __init ide_init_builtin_drivers (void)
 
 	(void) ideprobe_init();
 
+#ifdef CONFIG_PC9800_NOTDEF
+	printk(KERN_DEBUG "ide_init_builtin_drivers(): ideprobe_init() done.\n");
+#endif
+
 #if defined(__mc68000__) || defined(CONFIG_APUS)
 	if (ide_hwifs[0].io_ports[IDE_DATA_OFFSET]) {
 		enable_irq(ide_hwifs[0].irq);
@@ -3299,9 +3338,15 @@ void __init ide_init_builtin_drivers (void)
 	 */
 #ifdef CONFIG_BLK_DEV_IDEDISK
 	(void) idedisk_init();
+#ifdef CONFIG_PC9800_NOTDEF
+	printk(KERN_DEBUG "ide_init_builtin_drivers(): idedisk_init() done.\n");
+#endif
 #endif /* CONFIG_BLK_DEV_IDEDISK */
 #ifdef CONFIG_BLK_DEV_IDECD
 	(void) ide_cdrom_init();
+#ifdef CONFIG_PC9800_NOTDEF
+	printk(KERN_DEBUG "ide_init_builtin_drivers(): ide_cdrom_init() done.\n");
+#endif
 #endif /* CONFIG_BLK_DEV_IDECD */
 #ifdef CONFIG_BLK_DEV_IDETAPE
 	(void) idetape_init();
@@ -3316,6 +3361,9 @@ void __init ide_init_builtin_drivers (void)
     #warning ide scsi-emulation selected but no SCSI-subsystem in kernel
  #endif
 #endif /* CONFIG_BLK_DEV_IDESCSI */
+#ifdef CONFIG_PC9800_NOTDEF
+	printk("ide_init_builtin_drivers(): done.\n");
+#endif
 }
 
 static int default_cleanup (ide_drive_t *drive)

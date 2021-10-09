@@ -33,6 +33,7 @@ static int __init no_halt(char *s)
 
 __setup("no-hlt", no_halt);
 
+#ifndef CONFIG_PC9800
 static int __init mca_pentium(char *s)
 {
 	mca_pentium_flag = 1;
@@ -40,6 +41,7 @@ static int __init mca_pentium(char *s)
 }
 
 __setup("mca-pentium", mca_pentium);
+#endif
 
 static int __init no_387(char *s)
 {

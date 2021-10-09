@@ -1,6 +1,7 @@
 #ifndef _KBD_KERN_H
 #define _KBD_KERN_H
 
+#include <linux/config.h>
 #include <linux/interrupt.h>
 #include <linux/keyboard.h>
 
@@ -42,11 +43,19 @@ struct kbd_struct {
 #define LED_SHOW_IOCTL 1        /* only change leds upon ioctl */
 #define LED_SHOW_MEM 2          /* `heartbeat': peek into memory */
 
+#ifdef CONFIG_PC9800
+	unsigned char ledflagstate:4;	/* flags, not lights */
+	unsigned char default_ledflagstate:4;
+#else
 	unsigned char ledflagstate:3;	/* flags, not lights */
 	unsigned char default_ledflagstate:3;
+#endif
 #define VC_SCROLLOCK	0	/* scroll-lock mode */
 #define VC_NUMLOCK	1	/* numeric lock mode */
 #define VC_CAPSLOCK	2	/* capslock mode */
+#ifdef CONFIG_PC9800
+#define VC_KANALOCK 3	/* kanalock mode */
+#endif
 
 	unsigned char kbdmode:2;	/* one 2-bit value */
 #define VC_XLATE	0	/* translate keycodes using keymap */
@@ -68,6 +77,8 @@ extern int kbd_init(void);
 
 extern unsigned char getledstate(void);
 extern void setledstate(struct kbd_struct *kbd, unsigned int led);
+struct kbd_repeat;
+extern int setrepeat (struct kbd_repeat *);
 
 extern struct tasklet_struct console_tasklet;
 

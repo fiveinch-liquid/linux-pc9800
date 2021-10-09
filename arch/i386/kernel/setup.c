@@ -104,15 +104,21 @@
 #include <asm/dma.h>
 #include <asm/mpspec.h>
 #include <asm/mmu_context.h>
+#ifdef CONFIG_PC9800
+#include <asm/pc9800.h>
+#include <asm/pc9800_sca.h>
+#endif
+
 /*
  * Machine setup..
  */
 
-char ignore_irq13;		/* set if exception 16 works */
+char ignore_fpu_irq;		/* set if exception 16 works */
 struct cpuinfo_x86 boot_cpu_data = { 0, 0, 0, 0, -1, 1, 0, 0, -1 };
 
 unsigned long mmu_cr4_features;
 
+#ifndef CONFIG_PC9800
 /*
  * Bus types ..
  */
@@ -127,8 +133,16 @@ unsigned int machine_submodel_id;
 unsigned int BIOS_revision;
 unsigned int mca_pentium_flag;
 
+#else /* NEC PC-9800 */
+
+int CLOCK_TICK_RATE;
+
+#endif
+
+#ifdef CONFIG_PCI
 /* For PCI or other memory-mapped resources */
 unsigned long pci_mem_start = 0x10000000;
+#endif
 
 /*
  * Setup options
@@ -142,6 +156,11 @@ struct sys_desc_table_struct {
 };
 
 struct e820map e820;
+
+#ifdef CONFIG_PC9800
+unsigned char pc9800_misc_flags;
+/* (bit 0) 1:High Address Video ram exists 0:otherwise */
+#endif
 
 unsigned char aux_device_present;
 
@@ -164,6 +183,9 @@ static int disable_x86_fxsr __initdata = 0;
 #define APM_BIOS_INFO (*(struct apm_bios_info *) (PARAM+0x40))
 #define DRIVE_INFO (*(struct drive_info_struct *) (PARAM+0x80))
 #define SYS_DESC_TABLE (*(struct sys_desc_table_struct*)(PARAM+0xa0))
+#ifdef CONFIG_PC9800
+#define PC9800_MISC_FLAGS (*(unsigned char *)(PARAM+0x1AF))
+#endif
 #define MOUNT_ROOT_RDONLY (*(unsigned short *) (PARAM+0x1F2))
 #define RAMDISK_FLAGS (*(unsigned short *) (PARAM+0x1F8))
 #define ORIG_ROOT_DEV (*(unsigned short *) (PARAM+0x1FC))
@@ -174,6 +196,14 @@ static int disable_x86_fxsr __initdata = 0;
 #define INITRD_SIZE (*(unsigned long *) (PARAM+0x21c))
 #define COMMAND_LINE ((char *) (PARAM+2048))
 #define COMMAND_LINE_SIZE 256
+
+#ifdef CONFIG_PC9800
+#ifdef CONFIG_SMP
+#define MPC_TABLE_SIZE 512
+#define MPC_TABLE ((char *) (PARAM+0x400))
+char mpc_table[MPC_TABLE_SIZE];
+#endif
+#endif /* CONFIG_PC9800 */
 
 #define RAMDISK_IMAGE_START_MASK  	0x07FF
 #define RAMDISK_PROMPT_FLAG		0x8000
@@ -310,6 +340,7 @@ static char command_line[COMMAND_LINE_SIZE];
        char saved_command_line[COMMAND_LINE_SIZE];
 
 struct resource standard_io_resources[] = {
+#ifndef CONFIG_PC9800
 	{ "dma1", 0x00, 0x1f, IORESOURCE_BUSY },
 	{ "pic1", 0x20, 0x3f, IORESOURCE_BUSY },
 	{ "timer", 0x40, 0x5f, IORESOURCE_BUSY },
@@ -318,19 +349,54 @@ struct resource standard_io_resources[] = {
 	{ "pic2", 0xa0, 0xbf, IORESOURCE_BUSY },
 	{ "dma2", 0xc0, 0xdf, IORESOURCE_BUSY },
 	{ "fpu", 0xf0, 0xff, IORESOURCE_BUSY }
+#else
+	{ "pic1", 0x00, 0x02, IORESOURCE_BUSY | IORESOURCE98_SPARSE},
+	{ "dma", 0x01, 0x2d, IORESOURCE_BUSY | IORESOURCE98_SPARSE },
+	{ "pic2", 0x08, 0x0a, IORESOURCE_BUSY | IORESOURCE98_SPARSE },
+	{ "calender clock", 0x20, 0x22, IORESOURCE98_SPARSE },
+/*	{ "32bit dma", 0x2b, 0x2d, IORESOURCE_BUSY | IORESOURCE98_SPARSE },*/
+	{ "system", 0x31, 0x37, IORESOURCE_BUSY | IORESOURCE98_SPARSE },
+	{ "nmi control", 0x50, 0x52, IORESOURCE_BUSY | IORESOURCE98_SPARSE },
+	{ "time stamp", 0x5c, 0x5f, IORESOURCE_BUSY },
+	{ "kanji rom", 0xa1, 0xa9, IORESOURCE_BUSY | IORESOURCE98_SPARSE },
+	{ "keyboard", 0x41, 0x43, IORESOURCE_BUSY | IORESOURCE98_SPARSE },
+	{ "text gdc", 0x60, 0x6e, IORESOURCE_BUSY | IORESOURCE98_SPARSE },
+	{ "crtc", 0x70, 0x7a, IORESOURCE_BUSY | IORESOURCE98_SPARSE },
+	{ "timer", 0x71, 0x77, IORESOURCE_BUSY | IORESOURCE98_SPARSE },
+	{ "graphic gdc", 0xa0, 0xa6, IORESOURCE_BUSY | IORESOURCE98_SPARSE },
+	{ "cpu", 0xf0, 0xf7, IORESOURCE_BUSY },
+	{ "fpu", 0xf8, 0xff, IORESOURCE_BUSY },
+	{ "dma ex. bank", 0x0e05, 0x0e0b, IORESOURCE98_SPARSE },
+	{ "beep freq.", 0x3fd9, 0x3fdf, IORESOURCE_BUSY | IORESOURCE98_SPARSE },
+	/* All PC-9800 have (exactly) one mouse interface.  */
+	{ "mouse pio", 0x7fd9, 0x7fdf, IORESOURCE98_SPARSE },
+	{ "mouse timer", 0xbfdb, 0xbfdb, 0 },
+	/* Some PC-9800 (mainly PC-9801) does not have this.
+	   { "mouse irq", 0x98d7, 0x98d7, 0 }, */
+#endif
 };
 
 #define STANDARD_IO_RESOURCES (sizeof(standard_io_resources)/sizeof(struct resource))
 
 static struct resource code_resource = { "Kernel code", 0x100000, 0 };
 static struct resource data_resource = { "Kernel data", 0, 0 };
+#ifndef CONFIG_PC9800
 static struct resource vram_resource = { "Video RAM area", 0xa0000, 0xbffff, IORESOURCE_BUSY };
+#else
+static struct resource tvram_resource = { "Text VRAM/CG window", 0xa0000, 0xa4fff, IORESOURCE_BUSY };
+static struct resource gvram_brg_resource = { "Graphic VRAM (B/R/G)", 0xa8000, 0xbffff, IORESOURCE_BUSY };
+static struct resource gvram_e_resource = { "Graphic VRAM (E)", 0xe0000, 0xe7fff, IORESOURCE_BUSY };
+#endif
 
 /* System ROM resources */
 #define MAXROMS 6
 static struct resource rom_resources[MAXROMS] = {
+#ifndef CONFIG_PC9800
 	{ "System ROM", 0xF0000, 0xFFFFF, IORESOURCE_BUSY },
 	{ "Video ROM", 0xc0000, 0xc7fff, IORESOURCE_BUSY }
+#else
+	{ "System ROM", 0xE8000, 0xFFFFF, IORESOURCE_BUSY },
+#endif
 };
 
 #define romsignature(x) (*(unsigned short *)(x) == 0xaa55)
@@ -338,11 +404,17 @@ static struct resource rom_resources[MAXROMS] = {
 static void __init probe_roms(void)
 {
 	int roms = 1;
+#ifndef CONFIG_PC9800
 	unsigned long base;
 	unsigned char *romstart;
+#else
+	int i;
+	__u8 *xrom_id;
+#endif
 
 	request_resource(&iomem_resource, rom_resources+0);
 
+#ifndef CONFIG_PC9800
 	/* Video ROM is standard at C000:0000 - C7FF:0000, check signature */
 	for (base = 0xC0000; base < 0xE0000; base += 2048) {
 		romstart = bus_to_virt(base);
@@ -396,6 +468,27 @@ static void __init probe_roms(void)
 
 		request_resource(&iomem_resource, rom_resources + roms);
 	}
+#else
+	xrom_id = (__u8 *) bus_to_virt (PC9800SCA_XROM_ID + 0x10);
+
+	for (i = 0; i < 16; i++) {
+		if (xrom_id[i] & 0x80) {
+			int j;
+
+			for (j = i + 1; j < 16 && (xrom_id[j] & 0x80); j++)
+				;
+			rom_resources[roms].start = 0x0D0000 + i * 0x001000;
+			rom_resources[roms].end = 0x0D0000 + j * 0x001000 - 1;
+			rom_resources[roms].name = "Extension ROM";
+			rom_resources[roms].flags = IORESOURCE_BUSY;
+
+			request_resource (&iomem_resource,
+					  rom_resources + roms);
+			if (++roms >= MAXROMS)
+				return;
+		}
+	}
+#endif
 }
 
 void __init add_memory_region(unsigned long long start,
@@ -442,6 +535,7 @@ static void __init print_memory_map(char *who)
 	}
 }
 
+#ifndef CONFIG_PC9800
 /*
  * Sanitize the BIOS e820 map.
  *
@@ -662,9 +756,14 @@ static int __init copy_e820_map(struct e820entry * biosmap, int nr_map)
  * It does not work on many machines.
  */
 #define LOWMEMSIZE()	(0x9f000)
+#else
+#define LOWMEMSIZE()	\
+	(((*(unsigned char *)__va(PC9800SCA_BIOS_FLAG) & 7) + 1) << 17)
+#endif
 
 void __init setup_memory_region(void)
 {
+#ifndef CONFIG_PC9800
 	char *who = "BIOS-e820";
 
 	/*
@@ -690,10 +789,23 @@ void __init setup_memory_region(void)
 		add_memory_region(0, LOWMEMSIZE(), E820_RAM);
 		add_memory_region(HIGH_MEMORY, mem_size << 10, E820_RAM);
   	}
+#else /* CONFIG_PC9800 */
+	char *who = "BIOS (common area)";
+	unsigned long lower_high, higher_high;
+
+	add_memory_region (0, LOWMEMSIZE (), 1);
+	lower_high = (__u32) *(__u8 *) bus_to_virt (PC9800SCA_EXPMMSZ) << 17;
+	higher_high = (__u32) *(__u16 *) bus_to_virt (PC9800SCA_MMSZ16M) << 20;
+	if (lower_high != 0x00F00000UL) {
+		add_memory_region (HIGH_MEMORY, lower_high, 1);
+		add_memory_region (0x01000000UL, higher_high, 1);
+	}
+	else
+		add_memory_region (HIGH_MEMORY, lower_high + higher_high, 1);
+#endif /* CONFIG_PC9800 */
 	printk(KERN_INFO "BIOS-provided physical RAM map:\n");
 	print_memory_map(who);
 } /* setup_memory_region */
-
 
 static inline void parse_mem_cmdline (char ** cmdline_p)
 {
@@ -779,6 +891,7 @@ void __init setup_arch(char **cmdline_p)
  	drive_info = DRIVE_INFO;
  	screen_info = SCREEN_INFO;
 	apm_info.bios = APM_BIOS_INFO;
+#ifndef CONFIG_PC9800
 	if( SYS_DESC_TABLE.length != 0 ) {
 		MCA_bus = SYS_DESC_TABLE.table[3] &0x2;
 		machine_id = SYS_DESC_TABLE.table[0];
@@ -786,6 +899,16 @@ void __init setup_arch(char **cmdline_p)
 		BIOS_revision = SYS_DESC_TABLE.table[2];
 	}
 	aux_device_present = AUX_DEVICE_INFO;
+#else
+	CLOCK_TICK_RATE = PC9800_8MHz_P () ? 1996800 : 2457600;
+	printk (KERN_DEBUG "CLOCK_TICK_RATE = %d\n", CLOCK_TICK_RATE);
+
+	pc9800_misc_flags = PC9800_MISC_FLAGS;
+#ifdef CONFIG_SMP
+	if ((*(u32 *)(MPC_TABLE)) == 0x504d4350)
+		memcpy (mpc_table, MPC_TABLE, *(u16 *)(MPC_TABLE + 4));
+#endif /* CONFIG_SMP */
+#endif /* CONFIG_PC9800 */
 
 #ifdef CONFIG_BLK_DEV_RAM
 	rd_image_start = RAMDISK_FLAGS & RAMDISK_IMAGE_START_MASK;
@@ -1006,20 +1129,47 @@ void __init setup_arch(char **cmdline_p)
 			request_resource(res, &data_resource);
 		}
 	}
+#ifndef CONFIG_PC9800
 	request_resource(&iomem_resource, &vram_resource);
+#else
+	if (PC9800_HIGHRESO_P ()) {
+		tvram_resource.start = 0xe0000;
+		tvram_resource.end   = 0xe4fff;
+		gvram_brg_resource.name  = "Graphic VRAM";
+		gvram_brg_resource.start = 0xc0000;
+		gvram_brg_resource.end   = 0xdffff;
+	}
+	request_resource (&iomem_resource, &tvram_resource);
+	request_resource (&iomem_resource, &gvram_brg_resource);
+	if (!PC9800_HIGHRESO_P ())
+		request_resource (&iomem_resource, &gvram_e_resource);
+#endif
 
 	/* request I/O space for devices used on all i[345]86 PCs */
 	for (i = 0; i < STANDARD_IO_RESOURCES; i++)
 		request_resource(&ioport_resource, standard_io_resources+i);
 
+#ifdef CONFIG_PC9800
+	if (PC9800_HIGHRESO_P() || PC9800_9821_P()) {
+		static const struct resource graphics_resource
+			= { "graphics", 0x9a0, 0x9ae, IORESOURCE98_SPARSE };
+
+		request_resource(&ioport_resource, &graphics_resource);
+	}
+#endif
+
+#ifdef CONFIG_PCI
 	/* Tell the PCI layer not to allocate too close to the RAM area.. */
 	low_mem_size = ((max_low_pfn << PAGE_SHIFT) + 0xfffff) & ~0xfffff;
 	if (low_mem_size > pci_mem_start)
 		pci_mem_start = low_mem_size;
+#endif
 
 #ifdef CONFIG_VT
 #if defined(CONFIG_VGA_CONSOLE)
 	conswitchp = &vga_con;
+#elif defined(CONFIG_GDC_CONSOLE)
+	conswitchp = &gdc_con;
 #elif defined(CONFIG_DUMMY_CONSOLE)
 	conswitchp = &dummy_con;
 #endif
@@ -2428,7 +2578,7 @@ int get_cpuinfo(char * buffer)
 			p += sprintf(p, "cache size\t: %d KB\n", c->x86_cache_size);
 		
 		/* We use exception 16 if we have hardware math and we've either seen it or the CPU claims it is internal */
-		fpu_exception = c->hard_math && (ignore_irq13 || cpu_has_fpu);
+		fpu_exception = c->hard_math && (ignore_fpu_irq || cpu_has_fpu);
 		p += sprintf(p, "fdiv_bug\t: %s\n"
 			        "hlt_bug\t\t: %s\n"
 			        "f00f_bug\t: %s\n"

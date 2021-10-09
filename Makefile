@@ -2,6 +2,7 @@ VERSION = 2
 PATCHLEVEL = 4
 SUBLEVEL = 7
 EXTRAVERSION =
+PC9800VERSION = 001pre
 
 KERNELRELEASE=$(VERSION).$(PATCHLEVEL).$(SUBLEVEL)$(EXTRAVERSION)
 
@@ -320,6 +321,9 @@ include/linux/version.h: ./Makefile
 	@echo \#define UTS_RELEASE \"$(KERNELRELEASE)\" > .ver
 	@echo \#define LINUX_VERSION_CODE `expr $(VERSION) \\* 65536 + $(PATCHLEVEL) \\* 256 + $(SUBLEVEL)` >> .ver
 	@echo '#define KERNEL_VERSION(a,b,c) (((a) << 16) + ((b) << 8) + (c))' >>.ver
+ifdef PC9800VERSION
+	@echo \#define UTS_PC9800_RELEASE \"$(PC9800VERSION)\" >>.ver
+endif
 	@mv -f .ver $@
 
 init/version.o: init/version.c include/linux/compile.h include/config/MARKER

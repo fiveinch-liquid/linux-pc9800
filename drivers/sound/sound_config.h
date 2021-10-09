@@ -34,13 +34,25 @@
  * Use always 64k buffer size. There is no reason to use shorter.
  */
 #undef DSP_BUFFSIZE
+#ifdef CONFIG_PC9800
+#define DSP_BUFFSIZE          61440
+#else
 #define DSP_BUFFSIZE		(64*1024)
+#endif
 
 #ifndef DSP_BUFFCOUNT
 #define DSP_BUFFCOUNT		1	/* 1 is recommended. */
 #endif
 
+#ifdef CONFIG_PC9800
+#define FM_MONO         0x28d2  /* This is the I/O address used by AdLib */
+#else
 #define FM_MONO		0x388	/* This is the I/O address used by AdLib */
+#endif
+
+#ifdef CONFIG_PC9800_118
+#define FM_MONO_118		0x1488	/* This is the I/O address used by AdLib */
+#endif
 
 #ifndef CONFIG_PAS_BASE
 #define CONFIG_PAS_BASE	0x388

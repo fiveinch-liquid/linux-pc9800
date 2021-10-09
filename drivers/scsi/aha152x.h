@@ -12,6 +12,12 @@
 #include <asm/io.h>
 #include <linux/version.h>
 
+#include <linux/config.h>
+
+#ifdef CONFIG_PC9800
+#include <scsi/scsicam.h>
+#endif
+
 int aha152x_detect(Scsi_Host_Template *);
 int aha152x_command(Scsi_Cmnd *);
 int aha152x_queue(Scsi_Cmnd *, void (*done)(Scsi_Cmnd *));
@@ -30,6 +36,11 @@ int aha152x_proc_info(char *buffer, char **start, off_t offset, int length, int 
 #define AHA152X_REVID "Adaptec 152x SCSI driver; $Revision: 2.4 $"
 
 /* Initial value of Scsi_Host entry */
+#ifdef CONFIG_PC9800
+#define AHA152X_BIOSPARAM pc9800_scsi_bios_param
+#else
+#define AHA152X_BIOSPARAM aha152x_biosparam
+#endif
 #define AHA152X { proc_name:			"aha152x",		\
                   proc_info:			aha152x_proc_info,	\
                   name:				AHA152X_REVID,		\
@@ -42,7 +53,7 @@ int aha152x_proc_info(char *buffer, char **start, off_t offset, int length, int 
 		  eh_host_reset_handler:	aha152x_host_reset,	\
                   release:			aha152x_release,	\
                   slave_attach:			0,			\
-                  bios_param:			aha152x_biosparam,	\
+                  bios_param:			AHA152X_BIOSPARAM,	\
                   can_queue:			1,			\
                   this_id:			7,			\
                   sg_tablesize:			SG_ALL,			\
@@ -53,6 +64,51 @@ int aha152x_proc_info(char *buffer, char **start, off_t offset, int length, int 
 		  use_new_eh_code:		1 }
 #endif
 
+
+#ifdef CONFIG_PC9800
+
+/* port addresses */
+#define SCSISEQ      (HOSTIOPORT0+0x00)    /* SCSI sequence control */
+#define SXFRCTL0     (HOSTIOPORT0+0x02)    /* SCSI transfer control 0 */
+#define SXFRCTL1     (HOSTIOPORT0+0x04)    /* SCSI transfer control 1 */
+#define SCSISIG      (HOSTIOPORT0+0x06)    /* SCSI signal in/out */
+#define SCSIRATE     (HOSTIOPORT0+0x08)    /* SCSI rate control */
+#define SELID        (HOSTIOPORT0+0x0a)    /* selection/reselection ID */
+#define SCSIID       SELID                 /* SCSI ID */
+#define SCSIDAT      (HOSTIOPORT0+0x0c)    /* SCSI latched data */
+#define SCSIBUS      (HOSTIOPORT0+0x0e)    /* SCSI data bus */
+#define STCNT0       (HOSTIOPORT0+0x10)    /* SCSI transfer count 0 */
+#define STCNT1       (HOSTIOPORT0+0x12)    /* SCSI transfer count 1 */
+#define STCNT2       (HOSTIOPORT0+0x14)    /* SCSI transfer count 2 */
+#define SSTAT0       (HOSTIOPORT0+0x16)    /* SCSI interrupt status 0 */
+#define SSTAT1       (HOSTIOPORT0+0x18)    /* SCSI interrupt status 1 */
+#define SSTAT2       (HOSTIOPORT0+0x1a)    /* SCSI interrupt status 2 */
+#define SCSITEST     (HOSTIOPORT0+0x1c)    /* SCSI test control */
+#define SSTAT3       SCSITEST              /* SCSI interrupt status 3 */
+#define SSTAT4       (HOSTIOPORT0+0x1e)    /* SCSI status 4 */
+#define SIMODE0      (HOSTIOPORT1+0x20)    /* SCSI interrupt mode 0 */
+#define SIMODE1      (HOSTIOPORT1+0x22)    /* SCSI interrupt mode 1 */
+#define DMACNTRL0    (HOSTIOPORT1+0x24)    /* DMA control 0 */
+#define DMACNTRL1    (HOSTIOPORT1+0x26)    /* DMA control 1 */
+#define DMASTAT      (HOSTIOPORT1+0x28)    /* DMA status */
+#define FIFOSTAT     (HOSTIOPORT1+0x2a)    /* FIFO status */
+#define DATAPORT     (HOSTIOPORT1+0x2c)    /* DATA port */
+#define BRSTCNTRL    (HOSTIOPORT1+0x32)    /* burst control */
+#define PORTA        (HOSTIOPORT1+0x34)    /* PORT A */
+#define PORTB        (HOSTIOPORT1+0x36)    /* PORT B */
+#define REV          (HOSTIOPORT1+0x38)    /* revision */
+#define STACK        (HOSTIOPORT1+0x3a)    /* stack */
+#define TEST         (HOSTIOPORT1+0x3c)    /* test register */
+
+#define IO_RANGE        0x40
+
+/* used in aha152x_porttest */
+#define O_PORTA         0x34               /* PORT A */
+#define O_PORTB         0x36               /* PORT B */
+#define O_DMACNTRL1     0x26               /* DMA control 1 */
+#define O_STACK         0x3a               /* stack */
+
+#else
 
 /* port addresses */
 #define SCSISEQ      (HOSTIOPORT0+0x00)    /* SCSI sequence control */
@@ -100,6 +156,8 @@ int aha152x_proc_info(char *buffer, char **start, off_t offset, int length, int 
 #define O_TC_PORTB      0x0b               /* PORT B */
 #define O_TC_DMACNTRL1  0x03               /* DMA control 1 */
 #define O_TC_STACK      0x0d               /* stack */
+
+#endif
 
 /* bits and bitmasks to ports */
 

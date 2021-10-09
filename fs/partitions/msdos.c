@@ -20,6 +20,11 @@
  */
 
 #include <linux/config.h>
+
+#ifdef CONFIG_NEC98_BSD_DISKLABEL
+# define CONFIG_BSD_DISKLABEL
+#endif
+
 #include <linux/fs.h>
 #include <linux/genhd.h>
 #include <linux/kernel.h>
@@ -40,8 +45,13 @@
 extern void md_autodetect_dev(kdev_t dev);
 #endif
 
+#ifndef CONFIG_NEC98_BSD_DISKLABEL
 static int current_minor;
+#else
+int current_minor;
+#endif
 
+#ifdef CONFIG_MSDOS_PARTITION
 /*
  * Many architectures don't like unaligned accesses, which is
  * frequently the case with the nr_sects and start_sect partition
@@ -192,6 +202,7 @@ static void extended_partition(struct gendisk *hd, kdev_t dev)
 done:
 	bforget(bh);
 }
+#endif /* CONFIG_MSDOS_PARTITION */
 
 static inline struct buffer_head *
 get_partition_table_block(struct gendisk *hd, int minor, int blocknr) {
@@ -199,6 +210,7 @@ get_partition_table_block(struct gendisk *hd, int minor, int blocknr) {
 	return bread(dev, blocknr, get_ptable_blocksize(dev));
 }
 
+#ifdef CONFIG_MSDOS_PARTITION
 #ifdef CONFIG_SOLARIS_X86_PARTITION
 
 /* james@bpgc.com: Solaris has a nasty indicator: 0x82 which also
@@ -249,6 +261,7 @@ solaris_x86_partition(struct gendisk *hd, int minor) {
 	printk(" >\n");
 }
 #endif
+#endif /* CONFIG_MSDOS_PARTITION */
 
 #ifdef CONFIG_BSD_DISKLABEL
 static void
@@ -298,7 +311,12 @@ check_and_add_bsd_partition(struct gendisk *hd,
  * Create devices for BSD partitions listed in a disklabel, under a
  * dos-like partition. See extended_partition() for more information.
  */
-static void bsd_disklabel_partition(struct gendisk *hd, int minor, int type) {
+#ifndef CONFIG_NEC98_BSD_DISKLABEL
+static void bsd_disklabel_partition(struct gendisk *hd, int minor, int type)
+#else
+void bsd_disklabel_partition(struct gendisk *hd, int minor, int type)
+#endif
+{
 	struct buffer_head *bh;
 	struct bsd_disklabel *l;
 	struct bsd_partition *p;
@@ -335,6 +353,8 @@ static void bsd_disklabel_partition(struct gendisk *hd, int minor, int type) {
 	printk(" >\n");
 }
 #endif
+
+#ifdef CONFIG_MSDOS_PARTITION
 
 #ifdef CONFIG_UNIXWARE_DISKLABEL
 /*
@@ -585,3 +605,4 @@ check_table:
 	bforget(bh);
 	return 1;
 }
+#endif /* CONFIG_MSDOS_PARTITION */

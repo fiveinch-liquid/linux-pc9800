@@ -3,6 +3,9 @@
  *
  *  Copyright (C) 1994  Linus Torvalds
  */
+
+#include <linux/config.h>
+
 #include <linux/errno.h>
 #include <linux/sched.h>
 #include <linux/kernel.h>
@@ -612,10 +615,22 @@ static inline int task_valid(struct task_struct *tsk)
 	return ret;
 }
 
+#ifndef CONFIG_PC9800
+# define ILLEGAL_IRQ(irq) ((irq) < 3 || (irq) > 15)
+# define FIRST_VM86_IRQ	3
+#else
+/*
+ * On PC-9800, slave PIC is wired master PIC's IR7,
+ * so that we don't allow vm86 to grab IRQ7.
+ */
+# define ILLEGAL_IRQ(irq) ((irq) < 2 || (irq) == 7 || (irq) > 15)
+# define FIRST_VM86_IRQ 2
+#endif
+
 static inline void handle_irq_zombies(void)
 {
 	int i;
-	for (i=3; i<16; i++) {
+	for (i=FIRST_VM86_IRQ; i<16; i++) {
 		if (vm86_irqs[i].tsk) {
 			if (task_valid(vm86_irqs[i].tsk)) continue;
 			free_vm86_irq(i);
@@ -628,7 +643,7 @@ static inline int get_and_reset_irq(int irqnumber)
 	int bit;
 	unsigned long flags;
 	
-	if ( (irqnumber<3) || (irqnumber>15) ) return 0;
+	if (ILLEGAL_IRQ(irqnumber)) return 0;
 	if (vm86_irqs[irqnumber].tsk != current) return 0;
 	save_flags(flags);
 	cli();
@@ -655,7 +670,7 @@ static int do_vm86_irq_handling(int subfunction, int irqnumber)
 			handle_irq_zombies();
 			if (!capable(CAP_SYS_ADMIN)) return -EPERM;
 			if (!((1 << sig) & ALLOWED_SIGS)) return -EPERM;
-			if ( (irq<3) || (irq>15) ) return -EPERM;
+			if (ILLEGAL_IRQ(irq)) return -EPERM;
 			if (vm86_irqs[irq].tsk) return -EPERM;
 			ret = request_irq(irq, &irq_handler, 0, VM86_IRQNAME, 0);
 			if (ret) return ret;
@@ -665,7 +680,7 @@ static int do_vm86_irq_handling(int subfunction, int irqnumber)
 		}
 		case  VM86_FREE_IRQ: {
 			handle_irq_zombies();
-			if ( (irqnumber<3) || (irqnumber>15) ) return -EPERM;
+			if (ILLEGAL_IRQ(irqnumber)) return -EPERM;
 			if (!vm86_irqs[irqnumber].tsk) return 0;
 			if (vm86_irqs[irqnumber].tsk != current) return -EPERM;
 			free_vm86_irq(irqnumber);

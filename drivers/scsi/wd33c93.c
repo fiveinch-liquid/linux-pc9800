@@ -174,6 +174,11 @@ MODULE_PARM(setup_strings, "s");
 #endif
 
 
+#ifdef CONFIG_SCSI_PC980155
+
+#include "pc980155regs.h"
+
+#else /* !CONFIG_SCSI_PC980155 */
 
 static inline uchar read_wd33c93(wd33c93_regs *regp,uchar reg_num)
 {
@@ -202,7 +207,7 @@ static inline void write_wd33c93_cmd(wd33c93_regs *regp, uchar cmd)
    regp->SCMD = cmd;
    mb();
 }
-
+#endif /* CONFIG_SCSI_PC980155 */
 
 static inline uchar read_1_byte(wd33c93_regs *regp)
 {
@@ -219,6 +224,11 @@ uchar x = 0;
    return x;
 }
 
+#ifdef CONFIG_SCSI_PC980155
+
+#include "pc980155regs.h"
+
+#else /* !CONFIG_SCSI_PC980155 */
 
 static void write_wd33c93_count(wd33c93_regs *regp,unsigned long value)
 {
@@ -243,7 +253,7 @@ unsigned long value;
    mb();
    return value;
 }
-
+#endif /* CONFIG_SCSI_PC980155 */
 
 /* The 33c93 needs to be told which direction a command transfers its
  * data; we use this function to figure it out. Returns true if there
@@ -456,12 +466,23 @@ DB(DB_EXECUTE,printk(")EX-0 "))
 
    /* quit if queue empty or all possible targets are busy */
 
+	 
    if (!cmd) {
 
 DB(DB_EXECUTE,printk(")EX-1 "))
 
       return;
       }
+
+#ifdef CONFIG_SCSI_PC980155
+#ifdef DEBUG
+printk ("exec: command = [");
+for (i=0; i<12; i++){
+  printk(" %02x", cmd->cmnd[i]);
+}
+printk ("]\nexec: target = %d\n", cmd->target);
+#endif
+#endif
 
    /*  remove command from queue */
    
@@ -576,7 +597,6 @@ no:
       }
 
    else {
-
          /*
           * Do a 'Select-With-ATN-Xfer' command. This will end with
           * one of the following interrupts:
@@ -592,9 +612,13 @@ no:
     * (take advantage of auto-incrementing)
     */
 
+#ifdef CONFIG_SCSI_PC980155
+      write_wd33c93_cdb(regp, cmd->cmd_len, cmd->cmnd);
+#else /* !CONFIG_SCSI_PC980155 */
       regp->SASR = WD_CDB_1;
       for (i=0; i<cmd->cmd_len; i++)
          regp->SCMD = cmd->cmnd[i];
+#endif /* CONFIG_SCSI_PC980155 */
 
    /* The wd33c93 only knows about Group 0, 1, and 5 commands when
     * it's doing a 'select-and-transfer'. To be safe, we write the
@@ -632,7 +656,6 @@ no:
     * the command disconnects, we'll come back to this routine
     * to search the input_Q again...
     */
-      
 DB(DB_EXECUTE,printk("%s%ld)EX-2 ",(cmd->SCp.phase)?"d:":"",cmd->pid))
 }
 
@@ -778,6 +801,46 @@ unsigned long length, flags;
    phs = read_wd33c93(regp, WD_COMMAND_PHASE);
 
 DB(DB_INTR,printk("{%02x:%02x-",asr,sr))
+
+#ifdef CONFIG_SCSI_PC980155
+#ifdef DEBUG
+   {
+     int i;
+     static uchar old_phs=0;
+     printk ("**interrupt ");
+     if (cmd){
+       printk ("cmd[");
+       for (i=0; i<cmd->cmd_len-1; i++){
+	 printk ("%02x ",cmd->cmnd[i]);
+       }
+       printk ("%02x] ",cmd->cmnd[i]);
+     } else {
+       printk ("NoConnectedCmd ");
+     }
+     printk ("asr=%02x sr=%02x phs=%02x\n",asr,sr,phs);
+
+     if (sr==0x49){
+       if (phs==old_phs){
+	 for (i = 0; i < cmd->SCp.this_residual; i++){
+	   printk ("%02x", cmd->SCp.buffer);
+	   switch (i % 32){
+	   case 7: case 15: case 23:
+	     printk(" ");
+	     break;
+	   case 31:
+	     printk("\n");
+	     break;
+	   default:
+	     break;
+	   }
+	 }
+	 panic("");
+       } else
+	 old_phs = phs;
+     }
+   }
+#endif
+#endif       
 
 /* After starting a DMA transfer, the next interrupt
  * is guaranteed to be in response to completion of
@@ -1094,7 +1157,6 @@ printk("sync_xfer=%02x",hostdata->sync_xfer[cmd->target]);
 /* Note: this interrupt will occur only after a LEVEL2 command */
 
       case CSR_SEL_XFER_DONE:
-
 /* Make sure that reselection is enabled at this point - it may
  * have been turned off for the command that just completed.
  */
@@ -1730,7 +1792,6 @@ char *cp;
       }
    return ++x;
 }
-
 
 
 void wd33c93_init (struct Scsi_Host *instance, wd33c93_regs *regs,

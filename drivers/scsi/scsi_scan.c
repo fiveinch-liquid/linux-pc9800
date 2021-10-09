@@ -116,6 +116,7 @@ static struct dev_info device_list[] =
 	{"MITSUMI", "CD-R CR-2201CS", "6119", BLIST_NOLUN},	/* Locks up if polled for lun != 0 */
 	{"RELISYS", "Scorpio", "*", BLIST_NOLUN},		/* responds to all LUN */
 	{"MICROTEK", "ScanMaker II", "5.61", BLIST_NOLUN},	/* responds to all LUN */
+        {"NEC", "D3856", "0009", BLIST_NOLUN},
 
 /*
  * Other types of devices that have special flags.

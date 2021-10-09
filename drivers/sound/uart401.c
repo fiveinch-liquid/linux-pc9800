@@ -21,6 +21,7 @@
  *		Untested
  */
 
+#include <linux/config.h>
 #include <linux/init.h>
 #include <linux/module.h>
 
@@ -41,9 +42,15 @@ typedef struct uart401_devc
 }
 uart401_devc;
 
+#ifdef CONFIG_PC9800
+#define	DATAPORT   (devc->base)
+#define	COMDPORT   (devc->base+0x100)
+#define	STATPORT   (devc->base+0x100)
+#else
 #define	DATAPORT   (devc->base)
 #define	COMDPORT   (devc->base+1)
 #define	STATPORT   (devc->base+1)
+#endif
 
 static int uart401_status(uart401_devc * devc)
 {
@@ -409,7 +416,12 @@ void unload_uart401(struct address_info *hw_config)
 		return;
 
 	reset_uart401(devc);
+#ifdef CONFIG_PC9800
 	release_region(hw_config->io_base, 4);
+	release_region (hw_config->io_base + 0x100, 4);
+#else
+	release_region (hw_config->io_base, 4);
+#endif
 
 	if (!devc->share_irq)
 		free_irq(devc->irq, devc);

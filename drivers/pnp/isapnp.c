@@ -88,8 +88,13 @@ MODULE_PARM_DESC(isapnp_reserve_io, "ISA Plug & Play - reserve I/O region(s) - p
 MODULE_PARM(isapnp_reserve_mem, "1-16i");
 MODULE_PARM_DESC(isapnp_reserve_mem, "ISA Plug & Play - reserve memory region(s) - address,size");
 
+#ifndef CONFIG_PC9800
 #define _PIDXR		0x279
 #define _PNPWRP		0xa79
+#else
+#define _PIDXR		0x259
+#define _PNPWRP		0xa59
+#endif
 
 /* short tags */
 #define _STAG_PNPVERNO		0x01

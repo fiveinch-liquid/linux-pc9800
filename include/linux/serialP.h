@@ -20,6 +20,7 @@
  */
 
 #include <linux/config.h>
+#include <linux/version.h>
 #include <linux/termios.h>
 #include <linux/tqueue.h>
 #include <linux/circ_buf.h>
@@ -75,6 +76,10 @@ struct async_struct {
 	int			MCR; 	/* Modem control register */
 	int			LCR; 	/* Line control register */
 	int			ACR;	 /* 16950 Additional Control Reg. */
+#ifdef CONFIG_PC9800
+	int			cmd8251;
+	int			msr8251;
+#endif
 	unsigned long		event;
 	unsigned long		last_active;
 	int			line;

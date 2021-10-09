@@ -150,6 +150,9 @@ static int sound_start_dma(struct dma_buffparms *dmap, unsigned long physaddr, i
 	unsigned long flags;
 	int chan = dmap->dma;
 
+#ifdef CONFIG_PC9800
+	outb(chan,0x29);
+#endif /* CONFIG_PC9800 */
 	/* printk( "Start DMA%d %d, %d\n",  chan,  (int)(physaddr-dmap->raw_buf_phys),  count); */
 
 	flags = claim_dma_lock();

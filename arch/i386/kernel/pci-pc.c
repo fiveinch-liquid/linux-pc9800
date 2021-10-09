@@ -242,6 +242,7 @@ static struct pci_ops * __init pci_check_direct(void)
 
 #ifdef CONFIG_PCI_BIOS
 
+#ifndef CONFIG_PC9800
 #define PCIBIOS_PCI_FUNCTION_ID 	0xb1XX
 #define PCIBIOS_PCI_BIOS_PRESENT 	0xb101
 #define PCIBIOS_FIND_PCI_DEVICE		0xb102
@@ -255,6 +256,22 @@ static struct pci_ops * __init pci_check_direct(void)
 #define PCIBIOS_WRITE_CONFIG_DWORD	0xb10d
 #define PCIBIOS_GET_ROUTING_OPTIONS	0xb10e
 #define PCIBIOS_SET_PCI_HW_INT		0xb10f
+#else /* CONFIG_PC9800 */
+#define PCIBIOS_PCI_FUNCTION_ID 	0xccXX
+#define PCIBIOS_PCI_BIOS_PRESENT 	0xcc81
+#define PCIBIOS_FIND_PCI_DEVICE		0xcc82
+#define PCIBIOS_FIND_PCI_CLASS_CODE	0xcc83
+/*      PCIBIOS_GENERATE_SPECIAL_CYCLE	0xcc86	(not supported by bios) */
+#define PCIBIOS_READ_CONFIG_BYTE	0xcc88
+#define PCIBIOS_READ_CONFIG_WORD	0xcc89
+#define PCIBIOS_READ_CONFIG_DWORD	0xcc8a
+#define PCIBIOS_WRITE_CONFIG_BYTE	0xcc8b
+#define PCIBIOS_WRITE_CONFIG_WORD	0xcc8c
+#define PCIBIOS_WRITE_CONFIG_DWORD	0xcc8d
+#define PCIBIOS_GET_ROUTING_OPTIONS	0xcc8e	/* PCI 2.1 only */
+#define PCIBIOS_SET_PCI_HW_INT		0xcc8f	/* PCI 2.1 only */
+/* Note: PC-9800 confirms PCI 2.1 on only few models */
+#endif /* CONFIG_PC9800 */
 
 /* BIOS32 signature: "_32_" */
 #define BIOS32_SIGNATURE	(('_' << 0) + ('3' << 8) + ('2' << 16) + ('_' << 24))

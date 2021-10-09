@@ -71,7 +71,6 @@ static const char RCSid[] = "$Header: /vger/u4/cvs/linux/drivers/scsi/hosts.c,v 
 
 Scsi_Host_Template * scsi_hosts;
 
-
 /*
  *  Our semaphores and timeout counters, where size depends on 
  *      MAX_SCSI_HOSTS here.

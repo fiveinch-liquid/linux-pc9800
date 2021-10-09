@@ -23,6 +23,13 @@
 #ifndef _aic7xxx_h
 #define _aic7xxx_h
 
+#include <linux/config.h>
+
+#if defined(__i386__) && !defined(CONFIG_PC9800)
+#  define AIC7XXX_BIOSPARAM aic7xxx_biosparam
+#else
+#  define AIC7XXX_BIOSPARAM NULL
+#endif
 #define AIC7XXX_H_VERSION  "5.2.0"
 
 /*
@@ -47,7 +54,7 @@
 	abort: aic7xxx_abort,					\
 	reset: aic7xxx_reset,					\
 	slave_attach: NULL,					\
-	bios_param: aic7xxx_biosparam,				\
+	bios_param: AIC7XXX_BIOSPARAM,				\
 	can_queue: 255,		/* max simultaneous cmds      */\
 	this_id: -1,		/* scsi id of host adapter    */\
 	sg_tablesize: 0,	/* max scatter-gather cmds    */\

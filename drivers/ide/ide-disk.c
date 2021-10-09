@@ -515,6 +515,9 @@ static void init_idedisk_capacity (ide_drive_t  *drive)
 		capacity = id->lba_capacity;
 		drive->cyl = capacity / (drive->head * drive->sect);
 		drive->select.b.lba = 1;
+#ifdef CONFIG_PC9800
+		printk (KERN_INFO "%s: using LBA access mode\n", drive->name);
+#endif
 	}
 	drive->capacity = capacity;
 }
@@ -765,6 +768,71 @@ static void idedisk_setup (ide_drive_t *drive)
 		break;
 	}
 
+#ifdef CONFIG_PC9800
+	/* XXX - need more checks */
+	if (!drive->nobios && !drive->scsi && !drive->removable) {
+		/* PC-9800's BIOS do pack drive numbers to be continuous,
+		   so extra work is needed here.  */
+
+		/* drive information passed from boot/setup.S */
+		struct drive_info_struct {
+			u16 cyl;
+			u8 sect, head;
+			u16 ssize;
+		} __attribute__ ((packed));
+		extern struct drive_info_struct drive_info[];
+
+		/* this pointer must be advanced only when *DRIVE is
+		   really hard disk. */
+		static struct drive_info_struct *info = drive_info;
+
+		if (info < &drive_info[4] && info->cyl) {
+			drive->cyl  = drive->bios_cyl  = info->cyl;
+			drive->head = drive->bios_head = info->head;
+			drive->sect = drive->bios_sect = info->sect;
+			++info;
+		}
+	}
+
+	/* =PC98 MEMO=
+	   physical capacity =< 65535*8*17 sect. : H/S=8/17 (fixed)
+	   physical capacity > 65535*8*17 sect. : use physical geometry
+	   (65535*8*17 = 8912760 sectors)
+	*/
+	printk("%s: CHS: physical %d/%d/%d, logical %d/%d/%d, BIOS %d/%d/%d\n",
+	       drive->name,
+	       id->cyls,	id->heads,	id->sectors,
+	       id->cur_cyls,	id->cur_heads,	id->cur_sectors,
+	       drive->bios_cyl,	drive->bios_head,drive->bios_sect);
+	if (!drive->cyl || !drive->head || !drive->sect) {
+		drive->cyl     = drive->bios_cyl  = id->cyls;
+		drive->head    = drive->bios_head = id->heads;
+		drive->sect    = drive->bios_sect = id->sectors;
+		printk("%s: not BIOS-supported device.\n",drive->name);
+	}
+	/* calculate drive capacity, and select LBA if possible */
+	init_idedisk_capacity (drive);
+
+	/*
+	 * if possible, give fdisk access to more of the drive,
+	 * by correcting bios_cyls:
+	 */
+	capacity = idedisk_capacity (drive);
+	if(capacity < 8912760 &&
+	   (drive->head != 8 || drive->sect != 17)){
+		drive->head = drive->bios_head = 8;
+		drive->sect = drive->bios_sect = 17;
+		drive->cyl  = drive->bios_cyl  =
+			capacity / (drive->bios_head * drive->bios_sect);
+		printk("%s: Fixing Geometry :: CHS=%d/%d/%d to CHS=%d/%d/%d\n",
+			   drive->name,
+			   id->cur_cyls,id->cur_heads,id->cur_sectors,
+			   drive->bios_cyl,drive->bios_head,drive->bios_sect);
+		id->cur_cyls    = drive->bios_cyl;
+		id->cur_heads   = drive->bios_head;
+		id->cur_sectors = drive->bios_sect;
+	}
+#else /* !CONFIG_PC9800 */
 	/* Extract geometry if we did not already have one for the drive */
 	if (!drive->cyl || !drive->head || !drive->sect) {
 		drive->cyl     = drive->bios_cyl  = id->cyls;
@@ -798,6 +866,7 @@ static void idedisk_setup (ide_drive_t *drive)
 	if ((capacity >= (drive->bios_cyl * drive->bios_sect * drive->bios_head)) &&
 	    (!drive->forced_geom) && drive->bios_sect && drive->bios_head)
 		drive->bios_cyl = (capacity / drive->bios_sect) / drive->bios_head;
+#endif
 
 	printk (KERN_INFO "%s: %ld sectors", drive->name, capacity);
 

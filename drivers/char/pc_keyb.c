@@ -32,6 +32,9 @@
 #include <linux/slab.h>
 #include <linux/kbd_kern.h>
 #include <linux/smp_lock.h>
+#ifdef CONFIG_PC9800
+#include <linux/kd.h>
+#endif
 
 #include <asm/keyboard.h>
 #include <asm/bitops.h>
@@ -49,6 +52,7 @@
 
 #ifdef CONFIG_MAGIC_SYSRQ
 unsigned char pckbd_sysrq_xlate[128] =
+# ifndef CONFIG_PC9800
 	"\000\0331234567890-=\177\t"			/* 0x00 - 0x0f */
 	"qwertyuiop[]\r\000as"				/* 0x10 - 0x1f */
 	"dfghjkl;'`\000\\zxcv"				/* 0x20 - 0x2f */
@@ -56,6 +60,15 @@ unsigned char pckbd_sysrq_xlate[128] =
 	"\206\207\210\211\212\000\000789-456+1"		/* 0x40 - 0x4f */
 	"230\177\000\000\213\214\000\000\000\000\000\000\000\000\000\000" /* 0x50 - 0x5f */
 	"\r\000/";					/* 0x60 - 0x6f */
+# else
+	"\0331234567890-^\\\177\t"			/* 0x00 - 0x0f */
+	"qwertyuiop@[\rasd"				/* 0x10 - 0x1f */
+	"fghjkl;:]zxcvbnm"				/* 0x20 - 0x2f */
+	",./_ \000\000\000\000\177\000\000\000\000\000\000" /* 0x30 - 0x3f */
+	"-/789*456+123=0,"				/* 0x40 - 0x4f */
+	".\000\213\214\215\216\217\000\000\000\000\000\000\000\000\000" /* 0x50 - 0x5f */
+	"\000\000\201\202\203\204\205\206\207\210\211\212"; /* 0x60 - 0x6f */
+# endif
 #endif
 
 static void kbd_write_command_w(int data);
@@ -72,7 +85,9 @@ static unsigned char handle_kbd_event(void);
 static volatile unsigned char reply_expected;
 static volatile unsigned char acknowledge;
 static volatile unsigned char resend;
-
+#ifdef CONFIG_PC9800
+static unsigned char repeat_setting = 0x51;
+#endif
 
 #if defined CONFIG_PSMOUSE
 /*
@@ -94,6 +109,18 @@ static unsigned char mouse_reply_expected;
 #define MAX_RETRIES	60		/* some aux operations take long time*/
 #endif /* CONFIG_PSMOUSE */
 
+#ifdef CONFIG_PC9800
+static inline void kb_wait(void)
+{
+	outb_p(0x00, 0x5F);
+	outb_p(0x00, 0x5F);
+	outb_p(0x00, 0x5F);
+	outb_p(0x00, 0x5F);
+	outb_p(0x00, 0x5F);
+	outb_p(0x00, 0x5F);
+	outb_p(0x00, 0x5F);
+}
+#else /* !CONFIG_PC9800 */
 /*
  * Wait for keyboard controller input buffer to drain.
  *
@@ -127,6 +154,7 @@ static void kb_wait(void)
 	printk(KERN_WARNING "Keyboard timed out[1]\n");
 #endif
 }
+#endif /* !CONFIG_PC9800 */
 
 /*
  * Translation of escaped scancodes to keycodes.
@@ -445,6 +473,7 @@ static inline void handle_keyboard_event(unsigned char scancode)
  */
 static unsigned char handle_kbd_event(void)
 {
+#ifndef CONFIG_PC9800
 	unsigned char status = kbd_read_status();
 	unsigned int work = 10000;
 
@@ -473,8 +502,16 @@ static unsigned char handle_kbd_event(void)
 		printk(KERN_ERR "pc_keyb: controller jammed (0x%02X).\n", status);
 
 	return status;
-}
+#else /* CONFIG_PC9800 */
+	unsigned char scancode = inb(KBD_DATA_REG);
+  
+	if (do_acknowledge(scancode))
+		handle_scancode(scancode, !(scancode & 0x80));
 
+	/* NOTE: return value is not used on NEC PC-9800! */
+	return 0;
+#endif /* !CONFIG_PC9800 */
+}
 
 static void keyboard_interrupt(int irq, void *dev_id, struct pt_regs *regs)
 {
@@ -504,7 +541,13 @@ static int send_data(unsigned char data)
 		acknowledge = 0; /* Set by interrupt routine on receipt of ACK. */
 		resend = 0;
 		reply_expected = 1;
+#ifdef CONFIG_PC9800
+		kbd_write_command_w(0x17);	/* enable send command */
+#endif
 		kbd_write_output_w(data);
+#ifdef CONFIG_PC9800
+		kbd_write_command_w(0x16);	/* disable send command */
+#endif
 		for (;;) {
 			if (acknowledge)
 				return 1;
@@ -525,12 +568,73 @@ static int send_data(unsigned char data)
 	return 0;
 }
 
+#ifdef CONFIG_PC9800
+int pckbd_setrepeat (struct kbd_repeat *rep)
+{
+	unsigned char new_setting = repeat_setting;
+
+	if (!kbd_exists)
+		return -ENODEV;
+
+	if (rep->delay >= 0) {
+		new_setting &= 0xCF;
+		if (rep->delay < 500) {
+			rep->delay = 250;
+		}
+		else if (rep->delay < 1000) {
+			rep->delay = 500;
+			new_setting |= 0x10;
+		}
+		else {
+			rep->delay = 1000;
+			new_setting |= 0x20;
+		}
+	}
+	if (rep->rate >= 0) {
+		if (rep->rate == 0)
+			new_setting = 0x70;	/* inhibit auto-repeat */
+		else {
+			int rate = ((rep->rate - 7) + 16) / 33;
+
+			new_setting &= 0xF0;
+			new_setting |= rate < 0 ? 0 : rate > 15 ? 15 : rate;
+		}
+
+		/* Following is auto-repeating rate got from one machine.
+			1 ->  40ms	 6 -> 203ms	11 -> 367ms
+			2 ->  70ms	 7 -> 241ms	12 -> 397ms
+			3 -> 107ms	 8 -> 266ms	13 -> 435ms
+			4 -> 137ms	 9 -> 300ms	14 -> 465ms
+			5 -> 174ms	10 -> 330ms	15 -> 500ms */
+	}
+	new_setting |= 0x40;
+	if (!send_data (KBD_CMD_SET_RATE) || !send_data (new_setting)) {
+		printk (KERN_ERR "keyboard: typematic rate setting failed\n");
+		kbd_exists = 1;
+		return -EIO;
+	}
+	repeat_setting = new_setting;
+
+	return 0;
+}
+#endif
+
 void pckbd_leds(unsigned char leds)
 {
+#ifdef CONFIG_PC9800
+	unsigned char leds98 = 0x70;
+	leds98 |= ((leds & 0x02) ? 0x01 : 0);  /* NUMLOCK */
+	leds98 |= leds & 0x04;                 /* CAPSLOCK */
+	leds98 |= leds & 0x08;                 /* KANALOCK */
+	if (!send_data(KBD_CMD_SET_LEDS))
+		return;
+	send_data(leds98);
+#else /* !CONFIG_PC9800 */
 	if (kbd_exists && (!send_data(KBD_CMD_SET_LEDS) || !send_data(leds))) {
 		send_data(KBD_CMD_ENABLE);	/* re-enable kbd if any errors */
 		kbd_exists = 0;
 	}
+#endif /* CONFIG_PC9800 */
 }
 
 /*
@@ -560,6 +664,7 @@ __setup("kbd-reset", kbd_reset_setup);
 #define KBD_NO_DATA	(-1)	/* No data */
 #define KBD_BAD_DATA	(-2)	/* Parity or other error */
 
+#ifndef CONFIG_PC9800
 static int __init kbd_read_data(void)
 {
 	int retval = KBD_NO_DATA;
@@ -598,6 +703,7 @@ static int __init kbd_wait_for_input(void)
 	} while (--timeout);
 	return -1;
 }
+#endif /* !CONFIG_PC9800 */
 
 static void kbd_write_command_w(int data)
 {
@@ -633,6 +739,7 @@ static void kbd_write_cmd(int cmd)
 }
 #endif /* CONFIG_PSMOUSE */
 
+#ifndef CONFIG_PC9800
 static char * __init initialize_kbd(void)
 {
 	int status;
@@ -731,11 +838,18 @@ static char * __init initialize_kbd(void)
 
 	return NULL;
 }
+#endif /* CONFIG_PC9800 */
 
 void __init pckbd_init_hw(void)
 {
 	kbd_request_region();
 
+#ifdef CONFIG_PC9800
+	while(inb_p(KBD_STATUS_REG)&2)
+		inb_p(KBD_DATA_REG);
+	if(inb_p(KBD_STATUS_REG)&0x38)
+		printk("Keyboard : Keyboard error!\n");
+#else
 	/* Flush any pending input. */
 	kbd_clear_input();
 
@@ -747,6 +861,7 @@ void __init pckbd_init_hw(void)
 
 #if defined CONFIG_PSMOUSE
 	psaux_init();
+#endif
 #endif
 
 	/* Ok, finally allocate the IRQ, and off we go.. */

@@ -117,7 +117,11 @@ obj-$(CONFIG_ARM_AM79C961A) += am79c961a.o
 obj-$(CONFIG_ARM_ETHERH) += 8390.o
 obj-$(CONFIG_WD80x3) += wd.o 8390.o
 obj-$(CONFIG_EL2) += 3c503.o 8390.o
-obj-$(CONFIG_NE2000) += ne.o 8390.o
+ifneq ($(CONFIG_PC9800),y)
+  obj-$(CONFIG_NE2000) += ne.o 8390.o
+else
+  obj-$(CONFIG_NE2K_CBUS) += ne.o 8390.o
+endif
 obj-$(CONFIG_NE2_MCA) += ne2.o 8390.o
 obj-$(CONFIG_HPLAN) += hp.o 8390.o
 obj-$(CONFIG_HPLAN_PLUS) += hp-plus.o 8390.o

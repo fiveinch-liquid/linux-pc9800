@@ -1,3 +1,7 @@
+#include <linux/config.h>
+
+#ifndef CONFIG_SB16_PC9800
+
 #define DSP_RESET	(devc->base + 0x6)
 #define DSP_READ	(devc->base + 0xA)
 #define DSP_WRITE	(devc->base + 0xC)
@@ -10,6 +14,26 @@
 #define OPL3_LEFT	(devc->base + 0x0)
 #define OPL3_RIGHT	(devc->base + 0x2)
 #define OPL3_BOTH	(devc->base + 0x8)
+
+#else /* CONFIG_SB16_PC9800 */
+
+#define _SB_98_IOINCR	(devc->type == MDL_SB16_PC9800 ? 0x100 : 1)
+
+#define DSP_RESET	(devc->base + 0x6 * _SB_98_IOINCR)
+#define DSP_READ	(devc->base + 0xA * _SB_98_IOINCR)
+#define DSP_WRITE	(devc->base + 0xC * _SB_98_IOINCR)
+#define DSP_COMMAND	(devc->base + 0xC * _SB_98_IOINCR)
+#define DSP_STATUS	(devc->base + 0xC * _SB_98_IOINCR)
+#define DSP_DATA_AVAIL	(devc->base + 0xE * _SB_98_IOINCR)
+#define DSP_DATA_AVL16	(devc->base + 0xF * _SB_98_IOINCR)
+#define MIXER_ADDR	(devc->base + 0x4 * _SB_98_IOINCR)
+#define MIXER_DATA	(devc->base + 0x5 * _SB_98_IOINCR)
+#define OPL3_LEFT	(devc->base + 0x0 * _SB_98_IOINCR)
+#define OPL3_RIGHT	(devc->base + 0x2 * _SB_98_IOINCR)
+#define OPL3_BOTH	(devc->base + 0x8 * _SB_98_IOINCR)
+
+#endif /* CONFIG_SB16_PC9800 */
+
 /* DSP Commands */
 
 #define DSP_CMD_SPKON		0xD1
@@ -45,6 +69,10 @@
 #define MDL_AEDSP	15	/* Audio Excel DSP 16 */
 #define MDL_ESSPCI	16	/* ESS PCI card */
 #define MDL_YMPCI	17	/* Yamaha PCI sb in emulation */
+
+#ifdef CONFIG_SB16_PC9800
+#define MDL_SB16_PC9800	9801 /* SB16 for PC-9800 */
+#endif
 
 #define SUBMDL_ALS007	42	/* ALS-007 differs from SB16 only in mixer */
 				/* register assignment */
@@ -174,6 +202,12 @@ int sb_common_mixer_set(sb_devc * devc, int dev, int left, int right);
 
 int sb_audio_open(int dev, int mode);
 void sb_audio_close(int dev);
+
+#ifdef CONFIG_SB16_PC9800
+int sb16_pc9800_check_region(int ioaddr);
+void sb16_pc9800_request_region(int ioaddr, const char *name);
+void sb16_pc9800_release_region(int ioaddr);
+#endif
 
 extern sb_devc *last_sb;
 

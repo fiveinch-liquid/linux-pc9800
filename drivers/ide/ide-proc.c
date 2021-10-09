@@ -414,6 +414,9 @@ static int proc_ide_read_imodel
 		case ide_cy82c693:	name = "cy82c693";	break;
 		case ide_4drives:	name = "4drives";	break;
 		case ide_pmac:		name = "mac-io";	break;
+#ifdef CONFIG_PC9800
+		case ide_pc9800:	name = "pc9800";	break;
+#endif
 		default:		name = "(unknown)";	break;
 	}
 	len = sprintf(page, "%s\n", name);

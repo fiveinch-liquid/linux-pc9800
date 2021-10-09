@@ -19,6 +19,12 @@
 #include <asm/vga.h>
 #endif
 
+#ifdef CONFIG_PC9800
+#ifdef CONFIG_GDC_CONSOLE
+#include <asm/gdc.h>
+#endif
+#endif
+
 #ifndef VT_BUF_HAVE_RW
 #define scr_writew(val, addr) (*(addr) = (val))
 #define scr_readw(addr) (*(addr))

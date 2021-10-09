@@ -21,6 +21,9 @@ obj-y	:= process.o semaphore.o signal.o entry.o traps.o irq.o vm86.o \
 		pci-dma.o i386_ksyms.o i387.o bluesmoke.o dmi_scan.o
 
 
+export-objs		+= pc9800_debug.o
+obj-$(CONFIG_PC9800)	+= pc9800_debug.o
+
 ifdef CONFIG_PCI
 obj-y			+= pci-i386.o
 ifdef CONFIG_VISWS

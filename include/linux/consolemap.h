@@ -3,10 +3,16 @@
  *
  * Interface between console.c, selection.c  and consolemap.c
  */
+
+#include <linux/config.h>
+
 #define LAT1_MAP 0
 #define GRAF_MAP 1
 #define IBMPC_MAP 2
 #define USER_MAP 3
+#ifdef CONFIG_PC9800
+#define JP_MAP 4
+#endif
 
 struct vc_data;
 

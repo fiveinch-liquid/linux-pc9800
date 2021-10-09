@@ -27,11 +27,19 @@
  *
  */
 
+#include <linux/config.h>
+
+#ifdef CONFIG_LOGIBUSMOUSE_PC9800
+#define MOUSE_IRQ		13
+#else
 #define MOUSE_IRQ		5
+#endif
 #define LOGITECH_BUSMOUSE       0   /* Minor device # for Logitech  */
 #define MICROSOFT_BUSMOUSE      2   /* Minor device # for Microsoft */
 
 /*--------- LOGITECH BUSMOUSE ITEMS -------------*/
+
+#ifndef CONFIG_LOGIBUSMOUSE_PC9800
 
 #define	LOGIBM_BASE		0x23c
 #define	MSE_DATA_PORT		0x23c
@@ -41,6 +49,18 @@
 #define	MSE_CONFIG_PORT		0x23f
 #define	LOGIBM_EXTENT		0x4
 
+#else /* CONFIG_LOGIBUSMOUSE_PC9800 */
+
+#define	LOGIBM_BASE		0x7fd9
+#define	MSE_DATA_PORT		(LOGIBM_BASE + 0)
+/*	MSE_SIGNATURE_PORT	does not exist */
+#define	MSE_CONTROL_PORT	(LOGIBM_BASE + 4)
+/*	MSE_INTERRUPT_PORT	does not exist */
+#define	MSE_CONFIG_PORT		(LOGIBM_BASE + 6)
+#define	LOGIBM_EXTENT		(-7)
+
+#endif /* !CONFIG_LOGIBUSMOUSE_PC9800 */
+
 #define	MSE_ENABLE_INTERRUPTS	0x00
 #define	MSE_DISABLE_INTERRUPTS	0x10
 
@@ -49,10 +69,20 @@
 #define	MSE_READ_Y_LOW		0xc0
 #define	MSE_READ_Y_HIGH		0xe0
 
+#ifndef CONFIG_LOGIBUSMOUSE_PC9800
 /* Magic number used to check if the mouse exists */
 #define MSE_CONFIG_BYTE		0x91
 #define MSE_DEFAULT_MODE	0x90
 #define MSE_SIGNATURE_BYTE	0xa5
+#else
+/* Magic number used to check if the mouse exists */
+/* #define MSE_CONFIG_BYTE	is not used */
+#define MSE_DEFAULT_MODE	0x93
+/* #define MSE_SIGNATURE_BYTE	is not used */
+
+#define MSE_TIMER_PORT		0xbfdb
+#define MSE_DEFAULT_TIMER_VAL	0x00
+#endif
 
 /* useful Logitech Mouse macros */
 

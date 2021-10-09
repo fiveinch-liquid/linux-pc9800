@@ -248,7 +248,12 @@ static int __init find_isa_irq_pin(int irq, int type)
 
 		if ((mp_bus_id_to_type[lbus] == MP_BUS_ISA ||
 		     mp_bus_id_to_type[lbus] == MP_BUS_EISA ||
-		     mp_bus_id_to_type[lbus] == MP_BUS_MCA) &&
+#ifndef CONFIG_PC9800
+		     mp_bus_id_to_type[lbus] == MP_BUS_MCA
+#else
+		     mp_bus_id_to_type[lbus] == MP_BUS_NEC98
+#endif
+		    ) &&
 		    (mp_irqs[i].mpc_irqtype == type) &&
 		    (mp_irqs[i].mpc_srcbusirq == irq))
 
@@ -342,6 +347,12 @@ static int __init EISA_ELCR(unsigned int irq)
 #define default_MCA_trigger(idx)	(1)
 #define default_MCA_polarity(idx)	(0)
 
+/* NEC98 interrupts are always polarity zero edge triggered,
+ * when listed as conforming in the MP table. */
+
+#define default_NEC98_trigger(idx)     (0)
+#define default_NEC98_polarity(idx)    (0)
+
 static int __init MPBIOS_polarity(int idx)
 {
 	int bus = mp_irqs[idx].mpc_srcbus;
@@ -371,11 +382,19 @@ static int __init MPBIOS_polarity(int idx)
 					polarity = default_PCI_polarity(idx);
 					break;
 				}
+#ifndef CONFIG_PC9800
 				case MP_BUS_MCA: /* MCA pin */
 				{
 					polarity = default_MCA_polarity(idx);
 					break;
 				}
+#else
+				case MP_BUS_NEC98: /* NEC 98 pin */
+				{
+					polarity = default_NEC98_polarity(idx);
+					break;
+				}
+#endif
 				default:
 				{
 					printk(KERN_WARNING "broken BIOS!!\n");
@@ -440,11 +459,19 @@ static int __init MPBIOS_trigger(int idx)
 					trigger = default_PCI_trigger(idx);
 					break;
 				}
+#ifndef CONFIG_PC9800
 				case MP_BUS_MCA: /* MCA pin */
 				{
 					trigger = default_MCA_trigger(idx);
 					break;
 				}
+#else
+				case MP_BUS_NEC98: /* NEC 98 pin */
+				{
+					trigger = default_NEC98_trigger(idx);
+					break;
+				}
+#endif
 				default:
 				{
 					printk(KERN_WARNING "broken BIOS!!\n");
@@ -506,6 +533,9 @@ static int pin_2_irq(int idx, int apic, int pin)
 		case MP_BUS_ISA: /* ISA pin */
 		case MP_BUS_EISA:
 		case MP_BUS_MCA:
+#ifdef CONFIG_PC9800
+		case MP_BUS_NEC98:
+#endif /* CONFIG_PC9800 */
 		{
 			irq = mp_irqs[idx].mpc_srcbusirq;
 			break;
@@ -1585,7 +1615,12 @@ static inline void check_timer(void)
  * Additionally, something is definitely wrong with irq9
  * on PIIX4 boards.
  */
+#ifndef CONFIG_PC9800
 #define PIC_IRQS	(1<<2)
+#else
+/* PC-9800 uses IRQ7 for the cascade IRQ. */
+#define PIC_IRQS	(1<<7)
+#endif
 
 void __init setup_IO_APIC(void)
 {

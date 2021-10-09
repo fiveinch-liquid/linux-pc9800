@@ -25,6 +25,8 @@
  *		Linus
  */
 
+#include <linux/config.h>
+
  /*
   *  Bit simplified and optimized by Jan Hubicka
   *  Support of BIGMEM added by Gerhard Wichert, Siemens AG, July 1999.
@@ -37,7 +39,11 @@
 #ifdef SLOW_IO_BY_JUMPING
 #define __SLOW_DOWN_IO "\njmp 1f\n1:\tjmp 1f\n1:"
 #else
+#ifdef CONFIG_PC9800
+#define __SLOW_DOWN_IO "\noutb %%al,$0x5f"
+#else
 #define __SLOW_DOWN_IO "\noutb %%al,$0x80"
+#endif
 #endif
 
 #ifdef REALLY_SLOW_IO

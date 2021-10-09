@@ -6,6 +6,8 @@
  *	(c) 1997 Martin Mares <mj@atrey.karlin.mff.cuni.cz>
  */
 
+#include <linux/config.h>
+
 /*
  *	Configuration Switches
  */
@@ -33,9 +35,16 @@ extern unsigned char aux_device_present;
  *	Keyboard Controller Registers on normal PCs.
  */
 
+#ifdef CONFIG_PC9800
+#define KBD_STATUS_REG		0x43	/* Status register (R) */
+#define KBD_CNTL_REG		0x43	/* Controller command register (W) */
+#define KBD_DATA_REG		0x41	/* Keyboard data register (R/W) */
+#define KBD_MODE_REG		0x43
+#else /* !CONFIG_PC9800 */
 #define KBD_STATUS_REG		0x64	/* Status register (R) */
 #define KBD_CNTL_REG		0x64	/* Controller command register (W) */
 #define KBD_DATA_REG		0x60	/* Keyboard data register (R/W) */
+#endif /* CONFIG_PC9800 */
 
 /*
  *	Keyboard Controller Commands
@@ -59,11 +68,16 @@ extern unsigned char aux_device_present;
  *	Keyboard Commands
  */
 
+#ifdef CONFIG_PC9800
+#define KBD_CMD_SET_RATE	0x9C	/* Set typematic rate */
+#define KBD_CMD_SET_LEDS	0x9D	/* Set keyboard leds */
+#else /* CONFIG_PC9800 */
 #define KBD_CMD_SET_LEDS	0xED	/* Set keyboard leds */
 #define KBD_CMD_SET_RATE	0xF3	/* Set typematic rate */
 #define KBD_CMD_ENABLE		0xF4	/* Enable scanning */
 #define KBD_CMD_DISABLE		0xF5	/* Disable scanning */
 #define KBD_CMD_RESET		0xFF	/* Reset */
+#endif /* CONFIG_PC9800 */
 
 /*
  *	Keyboard Replies
@@ -71,7 +85,11 @@ extern unsigned char aux_device_present;
 
 #define KBD_REPLY_POR		0xAA	/* Power on reset */
 #define KBD_REPLY_ACK		0xFA	/* Command ACK */
+#ifdef CONFIG_PC9800
+#define KBD_REPLY_RESEND	0xFC	/* Command NACK, send the cmd again */
+#else
 #define KBD_REPLY_RESEND	0xFE	/* Command NACK, send the cmd again */
+#endif
 
 /*
  *	Status Register Bits

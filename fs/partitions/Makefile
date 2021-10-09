@@ -23,6 +23,8 @@ obj-$(CONFIG_SGI_PARTITION) += sgi.o
 obj-$(CONFIG_SUN_PARTITION) += sun.o
 obj-$(CONFIG_ULTRIX_PARTITION) += ultrix.o
 obj-$(CONFIG_IBM_PARTITION) += ibm.o
+obj-$(CONFIG_NEC98_PARTITION) += nec98.o msdos.o
+obj-$(CONFIG_X68K_PARTITION) += x68000.o
 
 include $(TOPDIR)/Rules.make
 

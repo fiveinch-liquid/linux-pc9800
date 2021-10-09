@@ -52,6 +52,10 @@
 #include <asm/uaccess.h>
 #include <asm/io.h>
 
+#ifdef CONFIG_PC9800_NOTDEF
+# include "pc9800.c"
+#endif
+
 static inline void do_identify (ide_drive_t *drive, byte cmd)
 {
 	int bswap = 1;
@@ -316,9 +320,21 @@ static int do_probe (ide_drive_t *drive, byte cmd)
 		(cmd == WIN_IDENTIFY) ? "ATA" : "ATAPI");
 #endif
 	ide_delay_50ms();	/* needed for some systems (e.g. crw9624 as drive0 with disk as slave) */
+#if 0
+	{
+		int i;
+		printk (KERN_DEBUG "%s: I/O ports = {", hwif->name);
+
+		for (i = IDE_DATA_OFFSET; i <= IDE_IRQ_OFFSET; i++)
+			printk (" %#x", hwif->io_ports[i]);
+		printk (" }\n");
+	}
+#endif
+
 	SELECT_DRIVE(hwif,drive);
 	ide_delay_50ms();
 	if (IN_BYTE(IDE_SELECT_REG) != drive->select.all && !drive->present) {
+		printk (KERN_DEBUG "%s: IN_BYTE(IDE_SELECT_REG) = %#x, drive->select.all = %#x\n", drive->name, IN_BYTE(IDE_SELECT_REG), drive->select.all);
 		if (drive->select.b.unit != 0) {
 			SELECT_DRIVE(hwif,&hwif->drives[0]);	/* exit with drive0 selected */
 			ide_delay_50ms();		/* allow BUSY_STAT to assert & clear */
@@ -326,6 +342,7 @@ static int do_probe (ide_drive_t *drive, byte cmd)
 		return 3;    /* no i/f present: mmm.. this should be a 4 -ml */
 	}
 
+	printk (KERN_DEBUG "%s: trying to identify...\n", drive->name);
 	if (OK_STAT(GET_STAT(),READY_STAT,BUSY_STAT)
 	 || drive->present || cmd == WIN_PIDENTIFY)
 	{
@@ -457,8 +474,34 @@ static void hwif_register (ide_hwif_t *hwif)
 		goto jump_straight8;
 	}
 
+
 	if (hwif->io_ports[IDE_DATA_OFFSET])
+#ifndef CONFIG_PC9800
 		ide_request_region(hwif->io_ports[IDE_DATA_OFFSET], 1, hwif->name);
+#else
+		/* IDE_DATA_REG is actually word (16 bits) register */
+		ide_request_region(hwif->io_ports[IDE_DATA_OFFSET], 2, hwif->name);
+#endif
+
+#ifdef CONFIG_PC9800
+	{
+		int i = IDE_ERROR_OFFSET;
+		ide_ioreg_t reg = hwif->io_ports[i++];
+
+		for (; i <= IDE_STATUS_OFFSET; i++)
+			if ((reg += 2) != hwif->io_ports[i])
+				break;
+		if (i > IDE_STATUS_OFFSET) {
+			ide_request_region(hwif->io_ports[IDE_ERROR_OFFSET],
+					   -((IDE_STATUS_OFFSET
+					      - IDE_ERROR_OFFSET) * 2 + 1),
+					   hwif->name);
+			hwif->straight8 = 2;	/* It's special */
+			goto jump_straight8;
+		}
+	}
+#endif /* CONFIG_PC9800 */
+
 	if (hwif->io_ports[IDE_ERROR_OFFSET])
 		ide_request_region(hwif->io_ports[IDE_ERROR_OFFSET], 1, hwif->name);
 	if (hwif->io_ports[IDE_NSECTOR_OFFSET])
@@ -494,7 +537,7 @@ static void probe_hwif (ide_hwif_t *hwif)
 
 	if (hwif->noprobe)
 		return;
-#ifdef CONFIG_BLK_DEV_IDE
+#if !defined(CONFIG_PC9800) && defined(CONFIG_BLK_DEV_IDE)
 	if (hwif->io_ports[IDE_DATA_OFFSET] == HD_DATA) {
 		extern void probe_cmos_for_drives(ide_hwif_t *);
 
@@ -506,6 +549,9 @@ static void probe_hwif (ide_hwif_t *hwif)
 #if CONFIG_BLK_DEV_PDC4030
 	    (hwif->chipset != ide_pdc4030 || hwif->channel == 0) &&
 #endif /* CONFIG_BLK_DEV_PDC4030 */
+#if CONFIG_BLK_DEV_IDE_PC9800
+	    (hwif->chipset != ide_pc9800 || !hwif->mate->present) &&
+#endif
 	    (hwif_check_regions(hwif))) {
 		int msgout = 0;
 		for (unit = 0; unit < MAX_DRIVES; ++unit) {
@@ -718,7 +764,7 @@ static int init_irq (ide_hwif_t *hwif)
 	}
 	restore_flags(flags);	/* all CPUs; safe now that hwif->hwgroup is set up */
 
-#if !defined(__mc68000__) && !defined(CONFIG_APUS) && !defined(__sparc__)
+#if !defined(__mc68000__) && !defined(CONFIG_APUS) && !defined(__sparc__) && !defined(CONFIG_PC9800)
 	printk("%s at 0x%03x-0x%03x,0x%03x on irq %d", hwif->name,
 		hwif->io_ports[IDE_DATA_OFFSET],
 		hwif->io_ports[IDE_DATA_OFFSET]+7,
@@ -728,6 +774,14 @@ static int init_irq (ide_hwif_t *hwif)
 		hwif->io_ports[IDE_DATA_OFFSET],
 		hwif->io_ports[IDE_DATA_OFFSET]+7,
 		hwif->io_ports[IDE_CONTROL_OFFSET], __irq_itoa(hwif->irq));
+#elif defined(CONFIG_PC9800)
+	printk("%s at 0x%03x-0x%03x,0x%03x-0x%03x on irq %d",
+		   hwif->name,
+		   hwif->io_ports[IDE_DATA_OFFSET],
+		   hwif->io_ports[IDE_DATA_OFFSET]+15,
+		   hwif->io_ports[IDE_CONTROL_OFFSET],
+		   hwif->io_ports[IDE_CONTROL_OFFSET]+3,
+		   hwif->irq);
 #else
 	printk("%s at %p on irq 0x%08x", hwif->name,
 		hwif->io_ports[IDE_DATA_OFFSET], hwif->irq);
@@ -902,10 +956,41 @@ int ideprobe_init (void)
 	 */
 	for (index = 0; index < MAX_HWIFS; ++index)
 		if (probe[index])
+#ifdef CONFIG_PC9800_NOTDEF
+		{
+			printk (KERN_DEBUG "ide-probe: probing %s...\n",
+				ide_hwifs[index].name);
+			pc9800_select_idebank(index);
+			if (pc9800_get_real_idebank(index) != index) {
+				printk (KERN_DEBUG "ide-probe: pc9800_get_real_idebank() mismatch\n");
+				if (index) {
+					pc9800_unselect_idebank(index);
+					continue;
+				}
+			}
+#endif
 			probe_hwif(&ide_hwifs[index]);
+#ifdef CONFIG_PC9800_NOTDEF
+			pc9800_unselect_idebank(index);
+		}
+#endif
 	for (index = 0; index < MAX_HWIFS; ++index)
 		if (probe[index])
+#ifdef CONFIG_PC9800_NOTDEF
+		{
+			pc9800_select_idebank(index);
+			if (pc9800_get_real_idebank(index) != index) {
+				if (index) {
+					pc9800_unselect_idebank(index);
+					continue;
+				}
+			}
+#endif
 			hwif_init(&ide_hwifs[index]);
+#ifdef CONFIG_PC9800_NOTDEF
+			pc9800_unselect_idebank(index);
+		}
+#endif
 	if (!ide_probe)
 		ide_probe = &ideprobe_module;
 	MOD_DEC_USE_COUNT;

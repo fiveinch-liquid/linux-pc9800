@@ -1,3 +1,5 @@
+#include <linux/config.h>
+
 #define cons_num	(vc_cons[currcons].d->vc_num)
 #define sw		(vc_cons[currcons].d->vc_sw)
 #define screenbuf	(vc_cons[currcons].d->vc_screenbuf)
@@ -27,6 +29,9 @@
 #define utf_count	(vc_cons[currcons].d->vc_utf_count)
 #define utf_char	(vc_cons[currcons].d->vc_utf_char)
 #define video_erase_char (vc_cons[currcons].d->vc_video_erase_char)
+#ifdef CONFIG_PC9800
+#define video_erase_attr (vc_cons[currcons].d->vc_video_erase_attr)
+#endif
 #define disp_ctrl	(vc_cons[currcons].d->vc_disp_ctrl)
 #define toggle_meta	(vc_cons[currcons].d->vc_toggle_meta)
 #define decscnm		(vc_cons[currcons].d->vc_decscnm)
@@ -55,6 +60,12 @@
 #define	s_reverse	(vc_cons[currcons].d->vc_s_reverse)
 #define	ulcolor		(vc_cons[currcons].d->vc_ulcolor)
 #define	halfcolor	(vc_cons[currcons].d->vc_halfcolor)
+#ifdef CONFIG_GDC_CONSOLE
+# define def_attr	(vc_cons[currcons].d->vc_def_attr)
+# define ul_attr	(vc_cons[currcons].d->vc_ul_attr)
+# define half_attr	(vc_cons[currcons].d->vc_half_attr)
+# define bold_attr	(vc_cons[currcons].d->vc_bold_attr)
+#endif
 #define tab_stop	(vc_cons[currcons].d->vc_tab_stop)
 #define palette		(vc_cons[currcons].d->vc_palette)
 #define bell_pitch	(vc_cons[currcons].d->vc_bell_pitch)
@@ -64,6 +75,19 @@
 #define complement_mask (vc_cons[currcons].d->vc_complement_mask)
 #define s_complement_mask (vc_cons[currcons].d->vc_s_complement_mask)
 #define hi_font_mask	(vc_cons[currcons].d->vc_hi_font_mask)
+#ifdef CONFIG_PC9800
+#define kanji_mode     (vc_cons[currcons].d->vc_kanji_mode)
+#define s_kanji_mode   (vc_cons[currcons].d->vc_s_kanji_mode)
+#define kanji_char1    (vc_cons[currcons].d->vc_kanji_char1)
+#define translate_ex   (vc_cons[currcons].d->vc_translate_ex)
+#define G0_charset_ex  (vc_cons[currcons].d->vc_G0_charset_ex)
+#define G1_charset_ex  (vc_cons[currcons].d->vc_G1_charset_ex)
+#define saved_G0_ex    (vc_cons[currcons].d->vc_saved_G0_ex)
+#define saved_G1_ex    (vc_cons[currcons].d->vc_saved_G1_ex)
+#define kanji_jis_mode (vc_cons[currcons].d->vc_kanji_jis_mode)
+#define s_kanji_jis_mode (vc_cons[currcons].d->vc_s_kanji_jis_mode)
+#define pc98_addbuf	(vc_cons[currcons].d->vc_pc98_addbuf)
+#endif
 
 #define vcmode		(vt_cons[currcons]->vc_mode)
 

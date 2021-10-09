@@ -82,10 +82,14 @@ if [ "$CONFIG_FB" = "y" ]; then
       tristate '  TGA framebuffer support' CONFIG_FB_TGA
    fi
    if [ "$ARCH" = "i386" ]; then
+     if [ "$CONFIG_PC9800" != "y" ]; then
       bool '  VESA VGA graphics console' CONFIG_FB_VESA
       tristate '  VGA 16-color graphics console' CONFIG_FB_VGA16
       tristate '  Hercules mono graphics console (EXPERIMENTAL)' CONFIG_FB_HGA
       define_bool CONFIG_VIDEO_SELECT y
+     else
+      tristate '  EGC 16-color graphics console' CONFIG_FB_EGC
+     fi
    fi
    if [ "$CONFIG_VISWS" = "y" ]; then
       tristate '  SGI Visual Workstation framebuffer support' CONFIG_FB_SGIVW

@@ -50,6 +50,7 @@ ide-obj-$(CONFIG_BLK_DEV_MAC_IDE)	+= macide.o
 ide-obj-$(CONFIG_BLK_DEV_NS87415)	+= ns87415.o
 ide-obj-$(CONFIG_BLK_DEV_OPTI621)	+= opti621.o
 ide-obj-$(CONFIG_BLK_DEV_OSB4)		+= osb4.o
+ide-obj-$(CONFIG_BLK_DEV_IDE_PC9800)	+= pc9800.o
 ide-obj-$(CONFIG_BLK_DEV_PDC202XX)	+= pdc202xx.o
 ide-obj-$(CONFIG_BLK_DEV_PDC4030)	+= pdc4030.o
 ide-obj-$(CONFIG_BLK_DEV_PIIX)		+= piix.o

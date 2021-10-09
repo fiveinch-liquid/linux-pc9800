@@ -5,6 +5,8 @@
  * 'tty.h' defines some structures used by tty_io.c and some defines.
  */
 
+#include <linux/config.h>
+
 /*
  * These constants are also useful for user-level apps (e.g., VC
  * resizing).
@@ -121,6 +123,12 @@ extern struct screen_info screen_info;
 #define VIDEO_TYPE_SUNPCI       0x51    /* Sun PCI based frame buffer. */
 
 #define VIDEO_TYPE_PMAC		0x60	/* PowerMacintosh frame buffer. */
+
+#ifdef CONFIG_PC9800
+#define VIDEO_TYPE_98NORMAL	0xa4	/* NEC PC-9800 normal */
+#define VIDEO_TYPE_9840		0xa5	/* NEC PC-9800 normal 40 lines */
+#define VIDEO_TYPE_98HIRESO	0xa6	/* NEC PC-9800 hireso */
+#endif
 
 /*
  * This character is the same as _POSIX_VDISABLE: it cannot be used as

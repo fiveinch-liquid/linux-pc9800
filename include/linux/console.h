@@ -48,6 +48,7 @@ struct consw {
 	void	(*con_invert_region)(struct vc_data *, u16 *, int);
 	u16    *(*con_screen_pos)(struct vc_data *, int);
 	unsigned long (*con_getxy)(struct vc_data *, unsigned long, int *, int *);
+	int	(*con_setterm_command)(struct vc_data *);
 };
 
 extern const struct consw *conswitchp;
@@ -55,8 +56,10 @@ extern const struct consw *conswitchp;
 extern const struct consw dummy_con;	/* dummy console buffer */
 extern const struct consw fb_con;	/* frame buffer based console */
 extern const struct consw vga_con;	/* VGA text console */
+extern const struct consw gdc_con;	/* PC-9800 GDC text console */
 extern const struct consw newport_con;	/* SGI Newport console  */
 extern const struct consw prom_con;	/* SPARC PROM console */
+extern const struct consw fb_con_pc98;	/* frame buffer based console for PC-9800 */
 
 void take_over_console(const struct consw *sw, int first, int last, int deflt);
 void give_up_console(const struct consw *sw);

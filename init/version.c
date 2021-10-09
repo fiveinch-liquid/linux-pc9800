@@ -22,5 +22,9 @@ struct new_utsname system_utsname = {
 };
 
 const char *linux_banner = 
-	"Linux version " UTS_RELEASE " (" LINUX_COMPILE_BY "@"
+	"Linux version " UTS_RELEASE 
+#ifdef UTS_PC9800_RELEASE
+	" for NEC PC-9800 [" UTS_PC9800_RELEASE "]"
+#endif
+	" (" LINUX_COMPILE_BY "@"
 	LINUX_COMPILE_HOST ") (" LINUX_COMPILER ") " UTS_VERSION "\n";

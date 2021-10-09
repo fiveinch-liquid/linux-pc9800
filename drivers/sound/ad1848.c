@@ -47,6 +47,10 @@
 #include "ad1848.h"
 #include "ad1848_mixer.h"
 
+#ifdef CONFIG_PC9800
+#include "sound_pc9800.h"
+#endif
+
 typedef struct
 {
 	int             base;
@@ -2457,6 +2461,9 @@ int probe_ms_sound(struct address_info *hw_config)
 	}
 	DDB(printk("MSS signature = %x\n", tmp & 0x3f));
 	if ((tmp & 0x3f) != 0x04 &&
+#ifdef CONFIG_PC9800
+	    (tmp & 0x3f) != 0x05 &&
+#endif
 	    (tmp & 0x3f) != 0x0f &&
 	    (tmp & 0x3f) != 0x00)
 	{
@@ -2470,12 +2477,19 @@ int probe_ms_sound(struct address_info *hw_config)
 		hw_config->card_subtype = 1;
 		return 1;
 	}
+#ifndef CONFIG_PC9800
 	if ((hw_config->irq != 5)  &&
 	    (hw_config->irq != 7)  &&
 	    (hw_config->irq != 9)  &&
 	    (hw_config->irq != 10) &&
 	    (hw_config->irq != 11) &&
 	    (hw_config->irq != 12))
+#else /* CONFIG_PC9800 */
+	if ((hw_config->irq != 3)  &&
+	    (hw_config->irq != 5)  &&
+	    (hw_config->irq != 10) &&
+	    (hw_config->irq != 12))
+#endif /* CONFIG_PC9800 */
 	{
 		printk(KERN_ERR "MSS: Bad IRQ %d\n", hw_config->irq);
 		return 0;
@@ -2504,10 +2518,24 @@ int probe_ms_sound(struct address_info *hw_config)
 
 void attach_ms_sound(struct address_info *hw_config, struct module *owner)
 {
+#ifndef CONFIG_PC9800
 	static signed char interrupt_bits[12] =
 	{
 		-1, -1, -1, -1, -1, 0x00, -1, 0x08, -1, 0x10, 0x18, 0x20
 	};
+#else /* CONFIG_PC9800 */
+	/* Valid IRQs are: 3 (INT0), 5 (INT1), 10 (INT41), 12 (INT5) */
+	static signed char interrupt_bits[13] =
+	{
+		-1, -1, -1, 0x08, -1, 0x10, -1, -1, -1, -1, 0x18, -1, 0x20 
+	};
+/* # ifdef CONFIG_PC9800_CANBE ??? */
+	static signed char interrupt_bits2[13] =
+	{
+		-1, -1, -1, 0x03, -1, 0x08, -1, -1, -1, -1, 0x02, -1, 0x00
+	};
+/* # endif */
+#endif /* CONFIG_PC9800 */
 	signed char     bits;
 	char            dma2_bit = 0;
 
@@ -2545,6 +2573,21 @@ void attach_ms_sound(struct address_info *hw_config, struct module *owner)
 	outb((bits | 0x40), config_port);
 	if ((inb(version_port) & 0x40) == 0)
 		printk(KERN_ERR "[MSS: IRQ Conflict?]\n");
+
+#ifdef CONFIG_PC9800	/* CONFIG_PC9800_CANBE ??? */
+	if (PC9800_SOUND_ID () == PC9800_SOUND_ID_118) {
+		/* Set up CanBe control registers. */
+		unsigned long flags;
+
+		printk (KERN_DEBUG "MSS: "
+			"Setting up CanBe Sound System control register\n");
+		save_flags (flags);
+		cli ();
+		outb (0x01, 0x0F4A);
+		outb (interrupt_bits2[hw_config->irq], 0x0F4B);
+		restore_flags (flags);
+	}
+#endif /* CONFIG_PC9800 */
 
 /*
  * Handle the capture DMA channel

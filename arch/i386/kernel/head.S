@@ -52,6 +52,31 @@ startup_32:
 	movl %eax,%fs
 	movl %eax,%gs
 #ifdef CONFIG_SMP
+#ifdef notdef_CONFIG_PC9800
+	orw %bx,%bx
+	jz 1f
+	jmp through_mp_config
+
+1:	movl $0x000e8000,%edi
+	movl $24576,%ecx
+	movl $0x5f504d5f,%eax	/*	_MP_	*/
+	repnz
+	scasl			/*	Search Intel FP structure	*/
+	jnz 1f
+	movl (%edi),%esi	/*	MPCFG_TABLE_ADDRESS	*/
+	orl %esi,%esi
+	jz 1f
+	movl $0x00090400,%edi
+	xorl %ecx,%ecx
+	movw 4(%esi),%cx
+	orl %ecx,%ecx
+	jz 1f
+	shrl $2,%ecx
+	rep
+	movsl
+1:
+through_mp_config:
+#endif /* CONFIG_PC9800 */
 	orw %bx,%bx
 	jz 1f
 

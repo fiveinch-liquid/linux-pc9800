@@ -10,6 +10,8 @@
  *	<tomsoft@informatik.tu-chemnitz.de>
  */
 
+#include <linux/config.h>
+
 #define TIMER_IRQ 0
 
 /*
@@ -25,7 +27,11 @@
 
 static __inline__ int irq_cannonicalize(int irq)
 {
+#ifdef CONFIG_PC9800
+	return ((irq == 7) ? 11 : irq);
+#else
 	return ((irq == 2) ? 9 : irq);
+#endif
 }
 
 extern void disable_irq(unsigned int);

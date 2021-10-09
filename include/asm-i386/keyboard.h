@@ -13,6 +13,8 @@
 
 #ifdef __KERNEL__
 
+#include <linux/config.h>
+
 #include <linux/kernel.h>
 #include <linux/ioport.h>
 #include <asm/io.h>
@@ -37,7 +39,17 @@ extern unsigned char pckbd_sysrq_xlate[128];
 #define kbd_init_hw		pckbd_init_hw
 #define kbd_sysrq_xlate		pckbd_sysrq_xlate
 
+#ifdef CONFIG_PC9800
+struct kbd_repeat;	/* in <linux/kd.h> */
+extern int pckbd_setrepeat (struct kbd_repeat *);
+# define kbd_setrepeat		pckbd_setrepeat
+#endif
+
+#ifdef CONFIG_PC9800
+#define SYSRQ_KEY 0x60	/* STOP key (PC-9800 have no SysRq key) */
+#else
 #define SYSRQ_KEY 0x54
+#endif
 
 /* resource allocation */
 #define kbd_request_region()

@@ -105,6 +105,10 @@
 
 #include "console_macros.h"
 
+#ifdef CONFIG_PC9800
+#include "console_pc9800.h"
+extern short translations[][256];
+#endif
 
 const struct consw *conswitchp;
 
@@ -143,6 +147,10 @@ static void vc_init(unsigned int console, unsigned int rows,
 static void blank_screen(unsigned long dummy);
 static void gotoxy(int currcons, int new_x, int new_y);
 static void save_cur(int currcons);
+#ifdef CONFIG_PC9800
+static void save_cur_kanji(int currcons);
+static void restore_cur_kanji(int currcons);
+#endif
 static void reset_terminal(int currcons, int do_clear);
 static void con_flush_chars(struct tty_struct *tty);
 static void set_vesa_blanking(unsigned long arg);
@@ -249,6 +257,10 @@ static void scrup(int currcons, unsigned int t, unsigned int b, int nr)
 	s = (unsigned short *) (origin+video_size_row*(t+nr));
 	scr_memcpyw(d, s, (b-t-nr) * video_size_row);
 	scr_memsetw(d + (b-t-nr) * video_num_columns, video_erase_char, video_size_row*nr);
+#ifdef CONFIG_PC9800
+	scr_memcpyw(pc9800_attr_offset(d), pc9800_attr_offset(s), (b-t-nr) * video_size_row);
+	scr_memsetw(pc9800_attr_offset(d + (b-t-nr) * video_num_columns), video_erase_attr, video_size_row*nr);
+#endif
 }
 
 static void
@@ -267,6 +279,10 @@ scrdown(int currcons, unsigned int t, unsigned int b, int nr)
 	step = video_num_columns * nr;
 	scr_memmovew(s + step, s, (b-t-nr)*video_size_row);
 	scr_memsetw(s, video_erase_char, 2*step);
+#ifdef CONFIG_PC9800
+	scr_memmovew(pc9800_attr_offset(s + step), pc9800_attr_offset(s), (b-t-nr)*video_size_row);
+	scr_memsetw(pc9800_attr_offset(s), video_erase_attr, 2*step);
+#endif
 }
 
 static void do_update_region(int currcons, unsigned long start, int count)
@@ -286,16 +302,32 @@ static void do_update_region(int currcons, unsigned long start, int count)
 		xx = nxx; yy = nyy;
 	}
 	for(;;) {
-		u16 attrib = scr_readw(p) & 0xff00;
+		u16 attrib = 
+#ifdef CONFIG_PC9800
+			scr_readw(pc9800_attr_offset(p))
+#else
+			scr_readw(p) & 0xff00
+#endif
+			;
 		int startx = xx;
 		u16 *q = p;
 		while (xx < video_num_columns && count) {
-			if (attrib != (scr_readw(p) & 0xff00)) {
+			if (attrib !=
+#ifdef CONFIG_PC9800
+				(scr_readw(pc9800_attr_offset(p)))
+#else
+				(scr_readw(p) & 0xff00)
+#endif
+				) {
 				if (p > q)
 					sw->con_putcs(vc_cons[currcons].d, q, p-q, yy, startx);
 				startx = xx;
 				q = p;
+#ifdef CONFIG_PC9800
+				attrib = scr_readw(pc9800_attr_offset(p));
+#else
 				attrib = scr_readw(p) & 0xff00;
+#endif
 			}
 			p++;
 			xx++;
@@ -371,7 +403,22 @@ static u8 build_attr(int currcons, u8 _color, u8 _intensity, u8 _blink, u8 _unde
 static void update_attr(int currcons)
 {
 	attr = build_attr(currcons, color, intensity, blink, underline, reverse ^ decscnm);
+#ifdef CONFIG_PC9800
+#ifdef CONFIG_FB
+	attr |= (pc98_addbuf << 8);
+#endif
+	video_erase_char = 0x0000 | ' '; /* ~ST on;BL,RV,UL,VL off;RGB on */
+	video_erase_attr = build_attr(currcons, color, 1, blink, 0, decscnm);
+#ifdef CONFIG_FB
+	video_erase_attr |= (pc98_addbuf << 8);
+#endif
+	if (decscnm){
+		video_erase_char |= 0x0000; /* reverse */
+		video_erase_attr |= 0x0004; /* reverse */
+	}
+#else /* !CONFIG_PC9800 */
 	video_erase_char = (build_attr(currcons, color, 1, blink, 0, decscnm) << 8) | ' ';
+#endif /* CONFIG_PC9800 */
 }
 
 /* Note: inverting the screen twice should revert to the original state */
@@ -410,6 +457,24 @@ void invert_screen(int currcons, int offset, int count, int viewed)
 		do_update_region(currcons, (unsigned long) p, count);
 }
 
+#ifdef CONFIG_PC9800
+/* can called form keyboard.c */
+void do_change_kanji_mode(int currcons, unsigned long mode){
+	switch(mode){
+	case 0:
+		kanji_mode = EUC_CODE;
+		break;
+	case 1:
+		kanji_mode = JIS_CODE;
+		break;
+	case 2:
+		kanji_mode = SJIS_CODE;
+		break;
+	}
+	kanji_char1 = 0;
+}
+#endif /* CONFIG_PC9800 */
+
 /* used by selection: complement pointer position */
 void complement_pos(int currcons, int offset)
 {
@@ -418,22 +483,49 @@ void complement_pos(int currcons, int offset)
 	static unsigned short oldx, oldy;
 
 	if (p) {
+#ifndef CONFIG_PC9800
 		scr_writew(old, p);
 		if (DO_UPDATE)
 			sw->con_putc(vc_cons[currcons].d, old, oldy, oldx);
+#else
+		scr_writew(old, pc9800_attr_offset(p));
+		if (DO_UPDATE) {
+#ifdef CONFIG_FB
+			pc98_addbuf = old;
+#endif
+			sw->con_putc(vc_cons[currcons].d, scr_readw(p),
+				     oldy, oldx);
+		}
+#endif
 	}
 	if (offset == -1)
 		p = NULL;
 	else {
 		unsigned short new;
 		p = screenpos(currcons, offset, 1);
+#ifdef CONFIG_PC9800
+		old = scr_readw(pc9800_attr_offset(p));
+#else
 		old = scr_readw(p);
+#endif
 		new = old ^ complement_mask;
+#ifdef CONFIG_PC9800
+		scr_writew(new, pc9800_attr_offset(p));
+#else
 		scr_writew(new, p);
+#endif
 		if (DO_UPDATE) {
 			oldx = (offset >> 1) % video_num_columns;
 			oldy = (offset >> 1) / video_num_columns;
+#ifdef CONFIG_PC9800
+# ifdef CONFIG_FB
+			pc98_addbuf = old;
+# endif
+			sw->con_putc(vc_cons[currcons].d, scr_readw(p),
+				     oldy, oldx);
+#else
 			sw->con_putc(vc_cons[currcons].d, new, oldy, oldx);
+#endif
 		}
 	}
 }
@@ -443,18 +535,38 @@ static void insert_char(int currcons, unsigned int nr)
 	unsigned short *p, *q = (unsigned short *) pos;
 
 	p = q + video_num_columns - nr - x;
-	while (--p >= q)
+	while (--p >= q) {
 		scr_writew(scr_readw(p), p + nr);
+#ifdef CONFIG_PC9800
+		scr_writew(scr_readw(pc9800_attr_offset(p)), pc9800_attr_offset(p) + nr);
+#endif
+	}
 	scr_memsetw(q, video_erase_char, nr*2);
+#ifdef CONFIG_PC9800
+	scr_memsetw(pc9800_attr_offset(q), video_erase_attr, nr*2);
+#endif
 	need_wrap = 0;
 	if (DO_UPDATE) {
 		unsigned short oldattr = attr;
 		sw->con_bmove(vc_cons[currcons].d,y,x,y,x+nr,1,
 			      video_num_columns-x-nr);
+#ifndef CONFIG_PC9800
 		attr = video_erase_char >> 8;
+
 		while (nr--)
 			sw->con_putc(vc_cons[currcons].d,
 				     video_erase_char,y,x+nr);
+#else
+		attr = video_erase_char;
+
+		while (nr--) {
+# ifdef CONFIG_FB
+			pc98_addbuf = video_erase_attr;
+# endif
+			sw->con_putc(vc_cons[currcons].d, video_erase_char,
+				     y,x+nr);
+		}
+#endif
 		attr = oldattr;
 	}
 }
@@ -466,19 +578,38 @@ static void delete_char(int currcons, unsigned int nr)
 
 	while (++i <= video_num_columns - nr) {
 		scr_writew(scr_readw(p+nr), p);
+#ifdef CONFIG_PC9800
+		scr_writew(scr_readw(pc9800_attr_offset(p+nr)), pc9800_attr_offset(p));
+#endif
 		p++;
 	}
 	scr_memsetw(p, video_erase_char, nr*2);
+#ifdef CONFIG_PC9800
+	scr_memsetw(pc9800_attr_offset(p), video_erase_attr, nr*2);
+#endif
 	need_wrap = 0;
 	if (DO_UPDATE) {
 		unsigned short oldattr = attr;
 		sw->con_bmove(vc_cons[currcons].d, y, x+nr, y, x, 1,
 			      video_num_columns-x-nr);
+#ifndef CONFIG_PC9800
 		attr = video_erase_char >> 8;
+
 		while (nr--)
 			sw->con_putc(vc_cons[currcons].d,
 				     video_erase_char, y,
 				     video_num_columns-1-nr);
+#else
+		attr = video_erase_char;
+
+		while (nr--) {
+# ifdef CONFIG_FB
+			pc98_addbuf = video_erase_attr;
+# endif
+			sw->con_putc(vc_cons[currcons].d, video_erase_char, y,
+				     video_num_columns-1-nr);
+		}
+#endif
 		attr = oldattr;
 	}
 }
@@ -587,7 +718,9 @@ void redraw_screen(int new_console, int is_switch)
 		int update;
 		set_origin(currcons);
 		update = sw->con_switch(vc_cons[currcons].d);
+#if !defined CONFIG_PC9800 || defined CONFIG_FB
 		set_palette(currcons);
+#endif
 		if (update && vcmode != KD_GRAPHICS)
 			do_update_region(currcons, origin, screenbuf_size/2);
 	}
@@ -624,7 +757,11 @@ static void visual_init(int currcons, int init)
     can_do_color = 0;
     sw->con_init(vc_cons[currcons].d, init);
     if (!complement_mask)
+#ifdef CONFIG_PC9800
+        complement_mask = 0x0004;
+#else
         complement_mask = can_do_color ? 0x7700 : 0x0800;
+#endif
     s_complement_mask = complement_mask;
     video_size_row = video_num_columns<<1;
     screenbuf_size = video_num_lines*video_size_row;
@@ -655,7 +792,11 @@ int vc_allocate(unsigned int currcons)	/* return 0 on success */
 	    visual_init(currcons, 1);
 	    if (!*vc_cons[currcons].d->vc_uni_pagedir_loc)
 		con_set_default_unimap(currcons);
+#ifdef CONFIG_PC9800
+	    q = (long)kmalloc(screenbuf_size * 2, GFP_KERNEL);
+#else /* CONFIG_PC9800 */
 	    q = (long)kmalloc(screenbuf_size, GFP_KERNEL);
+#endif /* CONFIG_PC9800 */
 	    if (!q) {
 		kfree((char *) p);
 		vc_cons[currcons].d = NULL;
@@ -697,7 +838,11 @@ int vc_resize(unsigned int lines, unsigned int cols,
 		    (cc == video_num_columns && ll == video_num_lines))
 			newscreens[currcons] = NULL;
 		else {
+#ifdef CONFIG_PC9800
+			unsigned short *p = (unsigned short *) kmalloc(ss * 2, GFP_USER);
+#else
 			unsigned short *p = (unsigned short *) kmalloc(ss, GFP_USER);
+#endif
 			if (!p) {
 				for (i = first; i < currcons; i++)
 					if (newscreens[i])
@@ -711,11 +856,26 @@ int vc_resize(unsigned int lines, unsigned int cols,
 	if (!todo)
 		return 0;
 
+#ifdef PC9800_DEBUG
+	currcons = first;
+	printk (KERN_DEBUG "vc_resize: %ux%u -> %ux%u\n",
+		video_num_columns, video_num_lines, cc, ll);
+#endif
+
 	for (currcons = first; currcons <= last; currcons++) {
 		unsigned int occ, oll, oss, osr;
 		unsigned long ol, nl, nlend, rlth, rrem;
+#ifdef CONFIG_PC9800
+		unsigned long oaoff;
+#endif
 		if (!newscreens[currcons] || !vc_cons_allocated(currcons))
 			continue;
+
+#ifdef PC9800_DEBUG
+		printk (KERN_DEBUG "vc_resize: #%d: %p+%u -> %p+%u\n",
+			currcons + 1, screenbuf, screenbuf_size,
+			newscreens[currcons], ss);
+#endif
 
 		oll = video_num_lines;
 		occ = video_num_columns;
@@ -732,20 +892,77 @@ int vc_resize(unsigned int lines, unsigned int cols,
 		ol = origin;
 		nl = (long) newscreens[currcons];
 		nlend = nl + ss;
+#ifndef CONFIG_PC9800
 		if (ll < oll)
 			ol += (oll - ll) * osr;
+#else
+		if (y >= ll) {
+			ol += (y - ll + 1) * osr;
+			y = ll - 1;
+		}
+		oaoff = PC9800_VRAM_ATTR_OFFSET;
+		if (!IS_FG)
+			oaoff = oss;
+#endif
 
 		update_attr(currcons);
 
 		while (ol < scr_end) {
-			scr_memcpyw((unsigned short *) nl, (unsigned short *) ol, rlth);
-			if (rrem)
-				scr_memsetw((void *)(nl + rlth), video_erase_char, rrem);
+#ifdef PC9800_DEBUG
+			int i, j;
+			printk (KERN_DEBUG
+				__FUNCTION__ ": scr_memcpyw (%p, %p, %u)"
+#ifdef CONFIG_PC9800
+				"; scr_memcpyw (%p, %p, %u)"
+#endif
+				"\n",
+				(void *) nl, (void *) ol, rlth
+#ifdef CONFIG_PC9800
+				, (void *) (nl + ss), (void *) (ol + oaoff), rlth
+#endif				
+			    );
+			for (j = cc - 1; j >= 0 && ((u16 *) ol)[j] == ' '; j--)
+				;
+			if (j >= 0) {
+				printk (KERN_DEBUG __FUNCTION__	": %p \"",
+					(void *) ol);
+				for (i = 0; i <= j; i++) {
+					u16 ch = ((u16 *) ol)[i];
+					printk ("%c",
+						(' ' <= ch && ch <= '~')
+						? ch : '.');
+				}
+				printk ("\"\n");
+			}
+#endif
+
+			(scr_memcpyw)((unsigned short *) nl, (unsigned short *) ol, rlth);
+#ifdef CONFIG_PC9800
+			(scr_memcpyw)((unsigned short *) (nl + ss), (unsigned short *) (ol + oaoff), rlth);
+#endif
+			if (rrem) {
+				(scr_memsetw)((void *)(nl + rlth), video_erase_char, rrem);
+#ifdef CONFIG_PC9800
+				(scr_memsetw)((void *)(nl + ss + rlth), video_erase_attr, rrem);
+#endif
+			}
 			ol += osr;
 			nl += sr;
+#ifdef CONFIG_PC9800
+			if (nl >= nlend)
+				break;
+#endif
 		}
-		if (nlend > nl)
-			scr_memsetw((void *) nl, video_erase_char, nlend - nl);
+#ifdef PC9800_DEBUG
+		printk (KERN_DEBUG __FUNCTION__ ":%u: nl=%#x, nlend=%#x\n",
+			__LINE__, nl, nlend);
+#endif
+		if (nlend > nl) {
+			(scr_memsetw)((void *) nl, video_erase_char, nlend - nl);
+#ifdef CONFIG_PC9800
+			(scr_memsetw)((void *) (nl + ss), video_erase_attr, nlend - nl);
+#endif
+		}
 		if (kmalloced)
 			kfree(screenbuf);
 		screenbuf = newscreens[currcons];
@@ -966,6 +1183,9 @@ static void csi_J(int currcons, int vpar)
 			return;
 	}
 	scr_memsetw(start, video_erase_char, 2*count);
+#ifdef CONFIG_PC9800
+	scr_memsetw(pc9800_attr_offset(start), video_erase_attr, 2*count);
+#endif
 	need_wrap = 0;
 }
 
@@ -1000,6 +1220,9 @@ static void csi_K(int currcons, int vpar)
 			return;
 	}
 	scr_memsetw(start, video_erase_char, 2 * count);
+#ifdef CONFIG_PC9800
+	scr_memsetw(pc9800_attr_offset(start), video_erase_attr, 2 * count);
+#endif
 	need_wrap = 0;
 }
 
@@ -1012,6 +1235,10 @@ static void csi_X(int currcons, int vpar) /* erase the following vpar positions 
 	count = (vpar > video_num_columns-x) ? (video_num_columns-x) : vpar;
 
 	scr_memsetw((unsigned short *) pos, video_erase_char, 2 * count);
+#ifdef CONFiG_PC9800
+	scr_memsetw((unsigned short *) pc9800_attr_offset(pos), video_erase_attr, 2 * count);
+#endif
+
 	if (DO_UPDATE)
 		sw->con_clear(vc_cons[currcons].d, y, x, 1, count);
 	need_wrap = 0;
@@ -1058,6 +1285,9 @@ static void csi_m(int currcons)
 				translate = set_translate(charset == 0
 						? G0_charset
 						: G1_charset,currcons);
+#ifdef CONFIG_PC9800
+				translate_ex = (charset == 0 ? G0_charset_ex : G1_charset_ex);
+#endif
 				disp_ctrl = 0;
 				toggle_meta = 0;
 				break;
@@ -1066,6 +1296,9 @@ static void csi_m(int currcons)
 				  * chars < 32 be displayed as ROM chars.
 				  */
 				translate = set_translate(IBMPC_MAP,currcons);
+#ifdef CONFIG_PC9800
+				translate_ex = 0;
+#endif
 				disp_ctrl = 1;
 				toggle_meta = 0;
 				break;
@@ -1074,6 +1307,9 @@ static void csi_m(int currcons)
 				  * high bit before displaying as ROM char.
 				  */
 				translate = set_translate(IBMPC_MAP,currcons);
+#ifdef CONFIG_PC9800
+				translate_ex = 0;
+#endif
 				disp_ctrl = 1;
 				toggle_meta = 1;
 				break;
@@ -1232,6 +1468,10 @@ static void set_mode(int currcons, int on_off)
 
 static void setterm_command(int currcons)
 {
+	if (sw->con_setterm_command
+	    && sw->con_setterm_command (vc_cons[currcons].d))
+		return;
+
 	switch(par[0]) {
 		case 1:	/* set color for underline mode */
 			if (can_do_color && par[1] < 16) {
@@ -1281,6 +1521,22 @@ static void setterm_command(int currcons)
 		case 14: /* set vesa powerdown interval */
 			vesa_off_interval = ((par[1] < 60) ? par[1] : 60) * 60 * HZ;
 			break;
+#ifdef CONFIG_PC9800
+	case 98:
+		if (par[1] < 10) /* change kanji mode */
+			do_change_kanji_mode(currcons, par[1]); /* 0208 */
+		else if (par[1] == 10){ /* save restore kanji mode */
+			switch (par[2]){
+			case 1:
+				save_cur_kanji(currcons);
+				break;
+			case 2:
+				restore_cur_kanji(currcons);
+				break;
+			}
+		}
+		break;
+#endif /* CONFIG_PC9800 */ 
 	}
 }
 
@@ -1363,8 +1619,24 @@ static void restore_cur(int currcons)
 	need_wrap = 0;
 }
 
+#ifdef CONFIG_PC9800
+static void save_cur_kanji(int currcons){
+        s_kanji_mode = kanji_mode;
+        s_kanji_jis_mode = kanji_jis_mode;
+}
+
+static void restore_cur_kanji(int currcons){
+        kanji_mode = s_kanji_mode;
+        kanji_jis_mode = s_kanji_jis_mode;
+        kanji_char1 = 0;
+}
+#endif
+
 enum { ESnormal, ESesc, ESsquare, ESgetpars, ESgotpars, ESfunckey,
 	EShash, ESsetG0, ESsetG1, ESpercent, ESignore, ESnonstd,
+#ifdef CONFIG_PC9800
+	ESsetJIS, ESsetJIS2,
+#endif
 	ESpalette };
 
 static void reset_terminal(int currcons, int do_clear)
@@ -1373,9 +1645,18 @@ static void reset_terminal(int currcons, int do_clear)
 	bottom		= video_num_lines;
 	vc_state	= ESnormal;
 	ques		= 0;
+#ifndef CONFIG_PC9800
 	translate	= set_translate(LAT1_MAP,currcons);
 	G0_charset	= LAT1_MAP;
 	G1_charset	= GRAF_MAP;
+#else
+	translate	= set_translate(JP_MAP,currcons);
+	translate_ex    = 0;
+	G0_charset      = JP_MAP;
+	G0_charset_ex   = 0;
+	G1_charset      = GRAF_MAP;
+	G1_charset_ex   = 0;
+#endif
 	charset		= 0;
 	need_wrap	= 0;
 	report_mouse	= 0;
@@ -1390,6 +1671,14 @@ static void reset_terminal(int currcons, int do_clear)
 	decawm		= 1;
 	deccm		= 1;
 	decim		= 0;
+
+#ifdef CONFIG_PC98
+	kanji_mode = SJIS_CODE;
+	kanji_char1 = 0;
+	kanji_jis_mode = JIS_NONE;
+
+	do_alt_char_clear(currcons);
+#endif /* CONFIG_PC98 */
 
 	set_kbd(decarm);
 	clr_kbd(decckm);
@@ -1415,6 +1704,12 @@ static void reset_terminal(int currcons, int do_clear)
 
 	bell_pitch = DEFAULT_BELL_PITCH;
 	bell_duration = DEFAULT_BELL_DURATION;
+
+#ifdef CONFIG_PC9800
+	kanji_mode = SJIS_CODE;
+	kanji_char1 = 0;
+	kanji_jis_mode = JIS_CODE_ASCII;
+#endif
 
 	gotoxy(currcons,0,0);
 	save_cur(currcons);
@@ -1457,11 +1752,17 @@ static void do_con_trol(struct tty_struct *tty, unsigned int currcons, int c)
 	case 14:
 		charset = 1;
 		translate = set_translate(G1_charset,currcons);
+#ifdef CONFIG_PC9800
+		translate_ex = G1_charset_ex;
+#endif
 		disp_ctrl = 1;
 		return;
 	case 15:
 		charset = 0;
 		translate = set_translate(G0_charset,currcons);
+#ifdef CONFIG_PC9800
+		translate_ex = G0_charset_ex;
+#endif
 		disp_ctrl = 0;
 		return;
 	case 24: case 26:
@@ -1518,6 +1819,11 @@ static void do_con_trol(struct tty_struct *tty, unsigned int currcons, int c)
 		case ')':
 			vc_state = ESsetG1;
 			return;
+#ifdef CONFIG_PC9800
+		case '$':
+			vc_state = ESsetJIS;
+			return;
+#endif
 		case '#':
 			vc_state = EShash;
 			return;
@@ -1751,7 +2057,10 @@ static void do_con_trol(struct tty_struct *tty, unsigned int currcons, int c)
 		if (c == '8') {
 			/* DEC screen alignment test. kludge :-) */
 			video_erase_char =
-				(video_erase_char & 0xff00) | 'E';
+#ifndef CONFIG_PC9800
+				(video_erase_char & 0xff00) |
+#endif /* !CONFIG_PC9800 */
+				'E';
 			csi_J(currcons, 2);
 			video_erase_char =
 				(video_erase_char & 0xff00) | ' ';
@@ -1759,6 +2068,16 @@ static void do_con_trol(struct tty_struct *tty, unsigned int currcons, int c)
 		}
 		return;
 	case ESsetG0:
+#ifdef CONFIG_PC9800
+		if (c == 'J') {
+			G0_charset = JP_MAP;
+			G0_charset_ex = 0;
+		} else if (c == 'I'){
+			G0_charset = JP_MAP;
+			G0_charset_ex = 1;
+		} else {
+			G0_charset_ex = 0;
+#endif /* CONFIG_PC9800 */
 		if (c == '0')
 			G0_charset = GRAF_MAP;
 		else if (c == 'B')
@@ -1767,11 +2086,32 @@ static void do_con_trol(struct tty_struct *tty, unsigned int currcons, int c)
 			G0_charset = IBMPC_MAP;
 		else if (c == 'K')
 			G0_charset = USER_MAP;
-		if (charset == 0)
+#ifdef CONFIG_PC9800
+		}
+#endif
+		if (charset == 0) {
 			translate = set_translate(G0_charset,currcons);
+#ifdef CONFIG_PC9800
+			translate_ex = G0_charset_ex;
+#endif
+		}
+#ifdef CONFIG_PC9800
+		kanji_jis_mode = JIS_CODE_ASCII;
+		kanji_char1 = 0;
+#endif
 		vc_state = ESnormal;
 		return;
 	case ESsetG1:
+#ifdef CONFIG_PC9800
+		if (c == 'J') {
+			G1_charset = JP_MAP;
+			G1_charset_ex = 0;
+		} else if (c == 'I'){
+			G1_charset = JP_MAP;
+			G1_charset_ex = 1;
+		} else {
+			G1_charset_ex = 0;
+#endif /* CONFIG_PC9800 */
 		if (c == '0')
 			G1_charset = GRAF_MAP;
 		else if (c == 'B')
@@ -1780,10 +2120,45 @@ static void do_con_trol(struct tty_struct *tty, unsigned int currcons, int c)
 			G1_charset = IBMPC_MAP;
 		else if (c == 'K')
 			G1_charset = USER_MAP;
-		if (charset == 1)
+#ifdef CONFIG_PC9800
+		}
+#endif
+		if (charset == 1) {
 			translate = set_translate(G1_charset,currcons);
+#ifdef CONFIG_PC9800
+			translate_ex = G1_charset_ex;
+#endif
+		}
+#ifdef CONFIG_PC9800
+		kanji_jis_mode = JIS_CODE_ASCII;
+		kanji_char1 = 0;
+#endif
 		vc_state = ESnormal;
 		return;
+#ifdef CONFIG_PC9800
+	case ESsetJIS:
+		if (c == '@')
+			kanji_jis_mode = JIS_CODE_78;
+		else if (c == 'B')
+			kanji_jis_mode = JIS_CODE_83;
+		else if (c == '('){
+			vc_state = ESsetJIS2;
+			return;
+		} else {
+		vc_state = ESnormal;
+		return;
+		}
+		vc_state = ESnormal;
+		kanji_char1 = 0;
+		return;
+	case ESsetJIS2:
+		if (c == 'D'){
+			kanji_jis_mode = JIS_CODE_90;
+			kanji_char1 = 0;
+		}
+		vc_state = ESnormal;
+		return;
+#endif /* CONIFG_PC9800 */
 	default:
 		vc_state = ESnormal;
 	}
@@ -1867,11 +2242,104 @@ again:
 		hide_cursor(currcons);
 
 	while (!tty->stopped && count) {
+#ifdef CONFIG_PC9800
+		int realkanji = 0;
+		int kanjioverrun = 0;
+#endif
 		c = *buf;
 		buf++;
 		n++;
 		count--;
 
+#ifdef CONFIG_PC9800
+		if (vc_state == ESnormal && !disp_ctrl){
+			switch (kanji_jis_mode){
+			case JIS_CODE_78:
+			case JIS_CODE_83:
+			case JIS_CODE_90:
+				if (utf)
+					break;
+				if (c >= 127 || c<= 0x20){
+					kanji_char1 = 0;
+					break;
+				}
+				if (kanji_char1){
+					tc = (((unsigned int)kanji_char1)<<8) |
+                        (((unsigned int)c) & 0x007f);
+					kanji_char1 = 0;
+					realkanji = 1;
+				} else {
+					kanji_char1 = ((unsigned int)c) & 0x007f;
+					continue;
+				} 
+				break;
+			case JIS_CODE_ASCII:
+			default:
+				switch (kanji_mode){
+				case SJIS_CODE:
+					if (kanji_char1){
+                        if ((0x40 <= c && c <= 0x7E) ||
+                            (0x80 <= c && c <= 0xFC)){
+							realkanji = 1;
+							/* SJIS to JIS */
+							kanji_char1 <<= 1; /* 81H-9FH --> 22H-3EH */
+							/* EOH-EFH --> C0H-DEH */
+							c -= 0x1f;         /* 40H-7EH --> 21H-5FH */
+							/* 80H-9EH --> 61H-7FH */
+							/* 9FH-FCH --> 80H-DDH */
+							if (!(c & 0x80)){
+								if (c < 0x61)
+									c++;
+								c += 0xde;
+							}
+							c &= 0xff;
+							c += 0xa1;
+							kanji_char1 += 0x1f;
+							tc = (kanji_char1 << 8) + c;
+							tc &= 0x7f7f;
+							kanji_char1 = 0;
+                        }
+					} else {
+                        if ((0x81 <= c && c <= 0x9f) ||
+                            (0xE0 <= c && c <= 0xEF)){
+							realkanji = 1;
+							kanji_char1 = c;
+							continue;
+                        }
+					}
+					break;
+				case EUC_CODE:
+					if (utf)
+                        break;
+					if (c <= 0x7f){
+                        kanji_char1 = 0;
+                        break;
+					}
+					if (kanji_char1){
+                        if (kanji_char1 == 0x8e){  /* SS2 */
+							/* realkanji ha tatenai */
+							tc = translations[JP_MAP][c];
+							kanji_char1 = 0;
+                        } else {
+							tc = (((unsigned int)kanji_char1)<<8) |
+								(((unsigned int)c) & 0x007f);
+							kanji_char1 = 0;
+							realkanji = 1;
+                        }
+					} else {
+                        kanji_char1 = (unsigned int)c;
+                        continue;
+					}
+					break;
+				case JIS_CODE:
+					/* to be supported */
+					break;
+				} /* switch (kanji_mode) */
+			} /* switch (kanji_jis_mode) */
+		} /* if (vc_state == ESnormal) */
+
+		if (!realkanji){
+#endif
 		if (utf) {
 		    /* Combine UTF-8 into Unicode */
 		    /* Incomplete characters silently ignored */
@@ -1907,8 +2375,15 @@ again:
 		      utf_count = 0;
 		    }
 		} else {	/* no utf */
+#ifdef CONFIG_PC9800
+		  tc = translate[(toggle_meta||translate_ex) ? (c|0x80) : c];
+#else
 		  tc = translate[toggle_meta ? (c|0x80) : c];
+#endif
 		}
+#ifdef CONFIG_PC9800
+		}
+#endif
 
                 /* If the original code was a control character we
                  * only allow a glyph to be displayed if the code is
@@ -1920,13 +2395,20 @@ again:
                  * them; to display an arbitrary font position use the
                  * direct-to-font zone in UTF-8 mode.
                  */
-                ok = tc && (c >= 32 ||
+                ok =
+#ifdef CONFIG_PC9800
+					realkanji || (
+#endif
+						(tc && (c >= 32 ||
                             (!utf && !(((disp_ctrl ? CTRL_ALWAYS
                                          : CTRL_ACTION) >> c) & 1)))
-                        && (c != 127 || disp_ctrl)
-			&& (c != 128+27);
+                        && (c != 127 || disp_ctrl))
+			&& (c != 128+27));
 
 		if (vc_state == ESnormal && ok) {
+#ifdef CONFIG_PC9800
+			if (!realkanji){
+#endif /* CONFIG_PC9800 */
 			/* Now try to find out how to display it */
 			tc = conv_uni_to_pc(vc_cons[currcons].d, tc);
 			if ( tc == -4 ) {
@@ -1945,23 +2427,55 @@ again:
                         }
 			if (tc & ~charmask)
                                 continue; /* Conversion failed */
+#ifdef CONFIG_PC9800
+			} /* !realkanji */
+#endif /* CONFIG_PC9800 */
 
 			if (need_wrap || decim)
 				FLUSH
 			if (need_wrap) {
 				cr(currcons);
 				lf(currcons);
+#ifdef CONFIG_PC9800
+				if (kanjioverrun){
+					x++;
+					pos+=2;
+					kanjioverrun = 0;
+				}
+#endif /* CONFIG_PC9800 */
 			}
 			if (decim)
 				insert_char(currcons, 1);
+#ifndef CONFIG_PC9800
 			scr_writew(himask ?
 				     ((attr << 8) & ~himask) + ((tc & 0x100) ? himask : 0) + (tc & 0xff) :
 				     (attr << 8) + tc,
 				   (u16 *) pos);
+#else /* CONFIG_PC9800 */
+			if (realkanji){
+				tc = ((tc>>8) & 0xff) | ((tc<<8) & 0xff00); 
+				scr_writew((tc - 0x20) & 0xff7f, (u16 *) pos);
+				scr_writew(attr, (u16 *) pc9800_attr_offset(pos));
+				x ++;
+				pos += 2;
+				scr_writew((tc - 0x20) | 0x80, (u16 *) pos);
+				scr_writew(attr, (u16 *) pc9800_attr_offset(pos));
+			} else {
+				scr_writew(tc & 0x00ff, (u16 *) pos);
+				scr_writew(attr, (u16 *) pc9800_attr_offset(pos));
+			}
+#endif /* !CONFIG_PC9800 */
 			if (DO_UPDATE && draw_x < 0) {
 				draw_x = x;
 				draw_from = pos;
+#ifdef CONFIG_PC9800
+				if ( realkanji ) {
+					draw_x --;
+					draw_from -= 2;
+				}
+#endif
 			}
+#ifndef CONFIG_PC9800
 			if (x == video_num_columns - 1) {
 				need_wrap = decawm;
 				draw_to = pos+2;
@@ -1969,6 +2483,16 @@ again:
 				x++;
 				draw_to = (pos+=2);
 			}
+#else /* CONFIG_PC9800 */
+			if (x >= video_num_columns - 1) {
+				need_wrap = decawm;
+				kanjioverrun = x - video_num_columns + 1;
+				draw_to = pos+2;
+			} else {
+				x++;
+				draw_to = (pos+=2);
+			}
+#endif /* !CONFIG_PC9800 */
 			continue;
 		}
 		FLUSH
@@ -2114,7 +2638,12 @@ void vt_console_print(struct console *co, const char * b, unsigned count)
 			if (c == 10 || c == 13)
 				continue;
 		}
+#ifdef CONFIG_PC9800
+		scr_writew( c, (unsigned short *) pos);
+		scr_writew(attr, (unsigned short *) pc9800_attr_offset(pos));
+#else
 		scr_writew((attr << 8) + c, (unsigned short *) pos);
+#endif
 		cnt++;
 		if (myx == video_num_columns - 1) {
 			need_wrap = 1;
@@ -2336,7 +2865,9 @@ static void con_close(struct tty_struct *tty, struct file * filp)
 
 static void vc_init(unsigned int currcons, unsigned int rows, unsigned int cols, int do_clear)
 {
+#if !defined CONFIG_PC9800 || defined CONFIG_FB
 	int j, k ;
+#endif
 
 	video_num_columns = cols;
 	video_num_lines = rows;
@@ -2346,16 +2877,32 @@ static void vc_init(unsigned int currcons, unsigned int rows, unsigned int cols,
 	set_origin(currcons);
 	pos = origin;
 	reset_vc(currcons);
+#if !defined CONFIG_PC9800 || defined CONFIG_FB
 	for (j=k=0; j<16; j++) {
 		vc_cons[currcons].d->vc_palette[k++] = default_red[j] ;
 		vc_cons[currcons].d->vc_palette[k++] = default_grn[j] ;
 		vc_cons[currcons].d->vc_palette[k++] = default_blu[j] ;
 	}
+#endif /* !CONFIG_PC9800 || CONFIG_FB */
+#ifndef CONFIG_PC9800
 	def_color       = 0x07;   /* white */
 	ulcolor		= 0x0f;   /* bold white */
 	halfcolor       = 0x08;   /* grey */
+#else
+	def_color	= 0x07;		/* white */
+	def_attr	= 0xE1;
+	ul_attr		= 0x08;		/* underline */
+	half_attr	= 0x00;		/* ignore half color */
+	bold_attr	= 0xC1;		/* yellow */
+#endif
 	init_waitqueue_head(&vt_cons[currcons]->paste_wait);
 	reset_terminal(currcons, do_clear);
+
+#ifdef PC9800_DEBUG
+	printk (KERN_DEBUG __FUNCTION__ ": (#%u) %ux%u, %p+%u\n",
+		cons_num + 1, video_num_columns, video_num_lines,
+		screenbuf, screenbuf_size);
+#endif
 }
 
 /*
@@ -2432,7 +2979,12 @@ void __init con_init(void)
 		vt_cons[currcons] = (struct vt_struct *)
 				alloc_bootmem(sizeof(struct vt_struct));
 		visual_init(currcons, 1);
+#if defined CONFIG_PC9800 || defined CONFIG_FB
+		screenbuf
+			= (unsigned short *) alloc_bootmem(screenbuf_size * 2);
+#else
 		screenbuf = (unsigned short *) alloc_bootmem(screenbuf_size);
+#endif
 		kmalloced = 0;
 		vc_init(currcons, video_num_lines, video_num_columns, 
 			currcons || !sw->con_save_screen);
@@ -2464,10 +3016,17 @@ static void clear_buffer_attributes(int currcons)
 {
 	unsigned short *p = (unsigned short *) origin;
 	int count = screenbuf_size/2;
+#ifndef CONFIG_PC9800
 	int mask = hi_font_mask | 0xff;
+#endif
 
 	for (; count > 0; count--, p++) {
+#ifdef CONFIG_PC9800
+		scr_writew(video_erase_attr, pc9800_attr_offset(p));
+#else
 		scr_writew((scr_readw(p)&mask) | (video_erase_char&~mask), p);
+#endif
+
 	}
 }
 
@@ -2481,11 +3040,21 @@ void take_over_console(const struct consw *csw, int first, int last, int deflt)
 {
 	int i, j = -1;
 	const char *desc;
+#if defined CONFIG_PC9800 && defined CONFIG_FB
+	int need_clear_attr = 0;
+#endif
 
 	desc = csw->con_startup();
 	if (!desc) return;
-	if (deflt)
+	if (deflt) {
+#if defined CONFIG_PC9800 && defined CONFIG_FB
+		need_clear_attr = ((conswitchp == &gdc_con
+				    && csw == &fb_con)
+				   || (conswitchp == &fb_con
+				       && csw == &gdc_con));
+#endif
 		conswitchp = csw;
+	}
 
 	for (i = first; i <= last; i++) {
 		int old_was_color;
@@ -2508,7 +3077,11 @@ void take_over_console(const struct consw *csw, int first, int last, int deflt)
 		 * the attributes in the screenbuf will be wrong.  The
 		 * following resets all attributes to something sane.
 		 */
-		if (old_was_color != vc_cons[i].d->vc_can_do_color)
+		if (old_was_color != vc_cons[i].d->vc_can_do_color
+#if defined CONFIG_PC9800 && defined CONFIG_FB
+		    || need_clear_attr
+#endif
+		    )
 			clear_buffer_attributes(i);
 
 		if (IS_VISIBLE)
@@ -2667,7 +3240,9 @@ void unblank_screen(void)
 	console_blanked = 0;
 	if (console_blank_hook)
 		console_blank_hook(0);
+#if !defined CONFIG_PC9800 || defined CONFIG_FB
 	set_palette(currcons);
+#endif
 	if (sw->con_blank(vc_cons[currcons].d, 0))
 		/* Low-level driver cannot restore -> do it ourselves */
 		update_screen(fg_console);
@@ -2851,6 +3426,7 @@ int con_font_op(int currcons, struct console_font_op *op)
 				rc = -ENOSPC;
 		}
 		if (!rc && op->data && copy_to_user(op->data, temp, c))
+
 			rc = -EFAULT;
 	}
 quit:	if (temp)
@@ -2866,11 +3442,23 @@ quit:	if (temp)
 u16 screen_glyph(int currcons, int offset)
 {
 	u16 w = scr_readw(screenpos(currcons, offset, 1));
+#ifndef CONFIG_PC9800
 	u16 c = w & 0xff;
+#endif
 
+#ifdef CONFIG_PC9800
+	static int warned;
+
+	if (!warned) {
+		warned = 1;
+		printk("console: screen_glyph is not supported.\n");
+	}
+	return w;
+#else
 	if (w & hi_font_mask)
 		c |= 0x100;
 	return c;
+#endif /* CONFIG_PC9800 */
 }
 
 /* used by vcs - note the word offset */
@@ -2929,8 +3517,10 @@ EXPORT_SYMBOL(color_table);
 EXPORT_SYMBOL(default_red);
 EXPORT_SYMBOL(default_grn);
 EXPORT_SYMBOL(default_blu);
+#ifndef CONFIG_PC9800
 EXPORT_SYMBOL(video_font_height);
 EXPORT_SYMBOL(video_scan_lines);
+#endif
 EXPORT_SYMBOL(vc_resize);
 EXPORT_SYMBOL(fg_console);
 EXPORT_SYMBOL(console_blank_hook);

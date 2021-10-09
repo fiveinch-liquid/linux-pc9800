@@ -189,6 +189,10 @@
 
    /* This is what the 3393 chip looks like to us */
 typedef struct {
+#ifdef CONFIG_SCSI_PC980155
+   volatile unsigned int   SASR;
+   volatile unsigned int   SCMD;
+#else
    volatile unsigned char   SASR;
 #if !defined(CONFIG_MVME147_SCSI)
    char                     pad;
@@ -197,8 +201,8 @@ typedef struct {
    char                     pad2,pad3;
 #endif
    volatile unsigned char   SCMD;
+#endif
 } wd33c93_regs;
-
 
 typedef int (*dma_setup_t) (Scsi_Cmnd *SCpnt, int dir_in);
 typedef void (*dma_stop_t) (struct Scsi_Host *instance, Scsi_Cmnd *SCpnt,

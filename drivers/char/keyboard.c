@@ -70,6 +70,10 @@ extern void ctrl_alt_del(void);
 DECLARE_WAIT_QUEUE_HEAD(keypress_wait);
 struct console;
 
+#ifdef CONFIG_PC9800
+extern void do_change_kanji_mode(int, unsigned long);
+#endif
+
 int keyboard_wait_for_keypress(struct console *co)
 {
 	sleep_on(&keypress_wait);
@@ -111,11 +115,18 @@ static k_handfn
 	do_self, do_fn, do_spec, do_pad, do_dead, do_cons, do_cur, do_shift,
 	do_meta, do_ascii, do_lock, do_lowercase, do_slock, do_dead2,
 	do_ignore;
+#ifdef CONFIG_PC9800
+static k_handfn do_chkmode;
+#endif
 
 static k_hand key_handler[16] = {
 	do_self, do_fn, do_spec, do_pad, do_dead, do_cons, do_cur, do_shift,
 	do_meta, do_ascii, do_lock, do_lowercase, do_slock, do_dead2,
+#ifdef CONFIG_PC9800
+	do_chkmode, do_ignore
+#else
 	do_ignore, do_ignore
+#endif
 };
 
 /* Key types processed even in raw modes */
@@ -128,6 +139,9 @@ typedef void (void_fn)(void);
 static void_fn do_null, enter, show_ptregs, send_intr, lastcons, caps_toggle,
 	num, hold, scroll_forw, scroll_back, boot_it, caps_on, compose,
 	SAK, decr_console, incr_console, spawn_console, bare_num;
+#ifdef CONFIG_PC9800
+static void_fn kana_toggle;
+#endif
 
 static void_fnp spec_fn_table[] = {
 	do_null,	enter,		show_ptregs,	show_mem,
@@ -135,6 +149,9 @@ static void_fnp spec_fn_table[] = {
 	num,		hold,		scroll_forw,	scroll_back,
 	boot_it,	caps_on,	compose,	SAK,
 	decr_console,	incr_console,	spawn_console,	bare_num
+#ifdef CONFIG_PC9800
+	,kana_toggle
+#endif
 };
 
 #define SPECIALS_ALLOWED_IN_RAW_MODE (1 << KVAL(K_SAK))
@@ -145,6 +162,9 @@ const int max_vals[] = {
 	NR_DEAD - 1, 255, 3, NR_SHIFT - 1,
 	255, NR_ASCII - 1, NR_LOCK - 1, 255,
 	NR_LOCK - 1, 255
+#ifdef CONFIG_PC9800
+	, 2
+#endif
 };
 
 const int NR_TYPES = SIZE(max_vals);
@@ -232,8 +252,12 @@ void handle_scancode(unsigned char scancode, int down)
 	/*
 	 *  Convert scancode to keycode
 	 */
+#ifdef CONFIG_PC9800
+	keycode = scancode & 0x7f;
+#else
 	if (!kbd_translate(scancode, &keycode, raw_mode))
 	    return;
+#endif
 
 	/*
 	 * At this point the variable `keycode' contains the keycode.
@@ -291,14 +315,20 @@ void handle_scancode(unsigned char scancode, int down)
 		    kbd->lockstate;
 		ushort *key_map = key_maps[shift_final];
 
+#ifdef CONFIG_PC9800
+		if (vc_kbd_led(kbd, VC_KANALOCK))
+			shift_final |= (1<<KG_KANASHIFT);
+#endif
+
 		if (key_map != NULL) {
 			keysym = key_map[keycode];
 			type = KTYP(keysym);
 
 			if (type >= 0xf0) {
 			    type -= 0xf0;
-			    if (raw_mode && ! (TYPES_ALLOWED_IN_RAW_MODE & (1 << type)))
+			    if (raw_mode && ! (TYPES_ALLOWED_IN_RAW_MODE & (1 << type))) {
 				return;
+				}
 			    if (type == KT_LETTER) {
 				type = KT_LATIN;
 				if (vc_kbd_led(kbd, VC_CAPSLOCK)) {
@@ -388,6 +418,15 @@ static void caps_on(void)
 	set_vc_kbd_led(kbd, VC_CAPSLOCK);
 }
 
+#ifdef CONFIG_PC9800
+static void kana_toggle(void)
+{
+	if (rep)
+		return;
+	chg_vc_kbd_led(kbd, VC_KANALOCK);
+}
+#endif
+
 static void show_ptregs(void)
 {
 	if (kbd_pt_regs)
@@ -472,12 +511,20 @@ static void send_intr(void)
 
 static void scroll_forw(void)
 {
+#ifdef CONFIG_PC9800
+	scrollfront(3);
+#else
 	scrollfront(0);
+#endif
 }
 
 static void scroll_back(void)
 {
+#ifdef CONFIG_PC9800
+	scrollback(3);
+#else
 	scrollback(0);
+#endif
 }
 
 static void boot_it(void)
@@ -524,7 +571,11 @@ static void do_null()
 
 static void do_spec(unsigned char value, char up_flag)
 {
+#ifdef CONFIG_PC9800
+	if (up_flag && value != 7 && value != 0x14) /* caps/kana lock */
+#else
 	if (up_flag)
+#endif
 		return;
 	if (value >= SIZE(spec_fn_table))
 		return;
@@ -585,6 +636,14 @@ static void do_dead2(unsigned char value, char up_flag)
 	diacr = (diacr ? handle_diacr(value) : value);
 }
 
+#ifdef CONFIG_PC9800
+static void do_chkmode(unsigned char value, char up_flag){
+	if (up_flag)
+		return;
+
+	do_change_kanji_mode (fg_console, value);
+}
+#endif /* CONFIG_PC9800 */
 
 /*
  * We have a combining character DIACR here, followed by the character CH.
@@ -812,6 +871,11 @@ static void do_slock(unsigned char value, char up_flag)
 		kbd->slockstate = 0;
 		chg_vc_kbd_slock(kbd, value);
 	}
+}
+
+int setrepeat (struct kbd_repeat *rep)
+{
+	return kbd_setrepeat (rep);
 }
 
 /*

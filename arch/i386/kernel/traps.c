@@ -351,6 +351,7 @@ gp_in_kernel:
 	}
 }
 
+#ifndef CONFIG_PC9800
 static void mem_parity_error(unsigned char reason, struct pt_regs * regs)
 {
 	printk("Uhhuh. NMI received. Dazed and confused, but trying to continue\n");
@@ -391,6 +392,7 @@ static void unknown_nmi_error(unsigned char reason, struct pt_regs * regs)
 	printk("Dazed and confused, but trying to continue\n");
 	printk("Do you have a strange power saving mode enabled?\n");
 }
+#endif	/* CONFIG_PC9800 */
 
 #if CONFIG_X86_IO_APIC
 
@@ -463,6 +465,7 @@ inline void nmi_watchdog_tick(struct pt_regs * regs)
 
 asmlinkage void do_nmi(struct pt_regs * regs, long error_code)
 {
+#ifndef CONFIG_PC9800
 	unsigned char reason = inb(0x61);
 
 
@@ -495,6 +498,26 @@ asmlinkage void do_nmi(struct pt_regs * regs, long error_code)
 	inb(0x71);		/* dummy */
 	outb(0x0f, 0x70);
 	inb(0x71);		/* dummy */
+#else
+	unsigned char sys33 = (inb (0x33) >> 1) & 3;
+	static const char *const mem[3] = {
+		"extension slot", "internal",
+		"both internal and extension slot"
+	};
+
+	printk("Uhhuh. NMI received. Dazed and confused, but trying to continue\n");
+	if (!sys33)
+		printk (KERN_CRIT "(memory error flags indicate NO error, so other reason?)\n");
+	else
+		printk (KERN_CRIT "You probably have a hardware probrem with your %s RAM chips\n",
+			mem[sys33 - 1]);
+
+	/* clear memory error flags */
+	outb (0x08, 0x37);
+	outb (0x09, 0x37);
+	outb (0x09, 0x50);	/* disable NMI once */
+	outb (0x09, 0x52);	/* re-enable it */
+#endif
 }
 
 /*
@@ -648,7 +671,7 @@ void math_error(void *eip)
 
 asmlinkage void do_coprocessor_error(struct pt_regs * regs, long error_code)
 {
-	ignore_irq13 = 1;
+	ignore_fpu_irq = 1;
 	math_error((void *)regs->eip);
 }
 
@@ -705,7 +728,7 @@ asmlinkage void do_simd_coprocessor_error(struct pt_regs * regs,
 {
 	if (cpu_has_xmm) {
 		/* Handle SIMD FPU exceptions on PIII+ processors. */
-		ignore_irq13 = 1;
+		ignore_fpu_irq = 1;
 		simd_math_error((void *)regs->eip);
 	} else {
 		/*

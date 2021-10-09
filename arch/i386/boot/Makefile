@@ -12,6 +12,7 @@ BOOT_INCL =	$(TOPDIR)/include/linux/config.h \
 		$(TOPDIR)/include/linux/autoconf.h \
 		$(TOPDIR)/include/asm/boot.h
 
+ifneq ($(CONFIG_PC9800),y)
 zImage: $(CONFIGURE) bootsect setup compressed/vmlinux tools/build
 	$(OBJCOPY) compressed/vmlinux compressed/vmlinux.out
 	tools/build bootsect setup compressed/vmlinux.out $(ROOT_DEV) > zImage
@@ -19,6 +20,30 @@ zImage: $(CONFIGURE) bootsect setup compressed/vmlinux tools/build
 bzImage: $(CONFIGURE) bbootsect bsetup compressed/bvmlinux tools/build
 	$(OBJCOPY) compressed/bvmlinux compressed/bvmlinux.out
 	tools/build -b bbootsect bsetup compressed/bvmlinux.out $(ROOT_DEV) > bzImage
+else
+zImage: $(CONFIGURE) pc9800/bootsect pc9800/setup compressed/vmlinux tools/build
+	$(OBJCOPY) compressed/vmlinux compressed/vmlinux.out
+	tools/build pc9800/bootsect pc9800/setup compressed/vmlinux.out $(ROOT_DEV) > zImage
+
+bzImage: $(CONFIGURE) pc9800/bbootsect pc9800/bsetup compressed/bvmlinux tools/build
+	$(OBJCOPY) compressed/bvmlinux compressed/bvmlinux.out
+	tools/build -b pc9800/bbootsect pc9800/bsetup compressed/bvmlinux.out $(ROOT_DEV) > bzImage
+
+pc9800/bootsect: dummy
+	@$(MAKE) -C pc9800 bootsect
+
+pc9800/setup: dummy
+	@$(MAKE) -C pc9800 setup
+
+pc9800/bbootsect: dummy
+	@$(MAKE) -C pc9800 bbootsect
+
+pc9800/bsetup: dummy
+	@$(MAKE) -C pc9800 bsetup
+
+.PHONY: dummy
+
+endif
 
 compressed/vmlinux: $(TOPDIR)/vmlinux
 	@$(MAKE) -C compressed vmlinux
@@ -85,3 +110,6 @@ clean:
 	rm -f setup bootsect zImage compressed/vmlinux.out
 	rm -f bsetup bbootsect bzImage compressed/bvmlinux.out
 	@$(MAKE) -C compressed clean
+ifdef CONFIG_PC9800
+	@$(MAKE) -C pc9800 clean
+endif

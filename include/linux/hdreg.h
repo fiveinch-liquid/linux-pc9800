@@ -6,10 +6,33 @@
  * Various sources.  
  */
 
+#include <linux/config.h>
+
+#ifndef CONFIG_PC9800
 #define HD_IRQ 14		/* the standard disk interrupt */
+#else
+#define HD_IRQ	9
+#endif
 
 /* ide.c has its own port definitions in "ide.h" */
 
+#ifdef CONFIG_PC9800
+/* Hd controller regs. for NEC PC-9800 */
+#define HD_DATA		0x640	/* _CTL when writing */
+#define HD_ERROR	0x642	/* see err-bits */
+#define HD_NSECTOR	0x644	/* nr of sectors to read/write */
+#define HD_SECTOR	0x646	/* starting sector */
+#define HD_LCYL		0x648	/* starting cylinder */
+#define HD_HCYL		0x64a	/* high byte of starting cyl */
+#define HD_CURRENT	0x64c	/* 101dhhhh , d=drive, hhhh=head */
+#define HD_STATUS	0x64e	/* see status-bits */
+#define HD_FEATURE HD_ERROR	/* same io address, read=error, write=feature */
+#define HD_PRECOMP HD_FEATURE	/* obsolete use of this port - predates IDE */
+#define HD_COMMAND HD_STATUS	/* same io address, read=status, write=cmd */
+
+#define HD_CMD		0x74c	/* used for resets */
+#define HD_ALTSTATUS	0x74c	/* same as HD_STATUS but doesn't clear irq */
+#else /* !CONFIG_PC9800 */
 /* Hd controller regs. Ref: IBM AT Bios-listing */
 #define HD_DATA		0x1f0	/* _CTL when writing */
 #define HD_ERROR	0x1f1	/* see err-bits */
@@ -25,6 +48,7 @@
 
 #define HD_CMD		0x3f6	/* used for resets */
 #define HD_ALTSTATUS	0x3f6	/* same as HD_STATUS but doesn't clear irq */
+#endif /* CONFIG_PC9800 */
 
 /* remainder is shared between hd.c, ide.c, ide-cd.c, and the hdparm utility */
 

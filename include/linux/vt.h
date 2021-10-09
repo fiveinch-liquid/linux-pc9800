@@ -1,6 +1,8 @@
 #ifndef _LINUX_VT_H
 #define _LINUX_VT_H
 
+#include <linux/config.h>
+
 /* 0x56 is 'V', to avoid collision with termios and kd */
 
 #define VT_OPENQRY	0x5600	/* find available vt */
@@ -50,5 +52,8 @@ struct vt_consize {
 #define VT_RESIZEX      0x560A  /* set kernel's idea of screensize + more */
 #define VT_LOCKSWITCH   0x560B  /* disallow vt switching */
 #define VT_UNLOCKSWITCH 0x560C  /* allow vt switching */
+#ifdef CONFIG_PC9800
+#define VT_GDC_RESIZE	0x5698
+#endif
 
 #endif /* _LINUX_VT_H */

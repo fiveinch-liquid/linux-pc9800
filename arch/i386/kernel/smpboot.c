@@ -588,12 +588,31 @@ static void __init do_boot_cpu (int apicid)
 
 	Dprintk("Setting warm reset code and vector.\n");
 
+#ifndef CONFIG_PC9800
 	CMOS_WRITE(0xa, 0xf);
+#else
+	/* reset code is stored in 8255 on PC-9800. */
+	outb (0x0e, 0x37);	/* SHUT0 = 0 */
+#endif
 	local_flush_tlb();
 	Dprintk("1.\n");
+#ifndef CONFIG_PC9800
 	*((volatile unsigned short *) phys_to_virt(0x469)) = start_eip >> 4;
+#else
+	/*
+	 * On PC-9800, continuation on warm reset is done by loading
+	 * %ss:%sp from 0x0000:0404 and executing 'lret', so:
+	 */
+	/* 0x3f0 is on unused interrupt vector and should be safe... */
+	*((volatile unsigned short *) phys_to_virt(0x3f0)) = start_eip >> 4;
+	*((volatile unsigned short *) phys_to_virt(0x3f2)) = start_eip & 0xf;
+#endif
 	Dprintk("2.\n");
+#ifndef CONFIG_PC9800
 	*((volatile unsigned short *) phys_to_virt(0x467)) = start_eip & 0xf;
+#else
+	*((volatile unsigned long *) phys_to_virt(0x404)) = 0x000003f0;
+#endif
 	Dprintk("3.\n");
 
 	/*
@@ -968,9 +987,14 @@ void __init smp_boot_cpus(void)
 		 * Paranoid:  Set warm reset code and vector here back
 		 * to default values.
 		 */
+#ifndef CONFIG_PC9800
 		CMOS_WRITE(0, 0xf);
 
 		*((volatile long *) phys_to_virt(0x467)) = 0;
+#else
+		outb (0x0f, 0x37);	/* SHUT0 = 1 */
+		*((volatile long *) phys_to_virt(0x404)) = 0;
+#endif
 	}
 #endif
 

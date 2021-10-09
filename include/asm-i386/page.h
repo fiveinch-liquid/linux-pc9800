@@ -86,10 +86,25 @@ typedef struct { unsigned long pgprot; } pgprot_t;
  * Tell the user there is some problem. Beep too, so we can
  * see^H^H^Hhear bugs in early bootup as well!
  */
+#if 0
 #define BUG() do { \
 	printk("kernel BUG at %s:%d!\n", __FILE__, __LINE__); \
 	__asm__ __volatile__(".byte 0x0f,0x0b"); \
 } while (0)
+#else
+#define BUG() do { \
+	printk("kernel BUG at %s:%d!\n", __FILE__, __LINE__); \
+	while (1) { \
+		int __ecx; \
+		__asm__ ("out%B0 %0,%1" : : "a"((char)6), "N"(0x37)); \
+		__asm__ __volatile__ ("0: outb %%al,%1; loop 0b" \
+				      : "=c"(__ecx) : "N"(0x5f), "0"(170000));\
+		__asm__ ("out%B0 %0,%1" : : "a"((char)7), "N"(0x37)); \
+		__asm__ __volatile__ ("0: outb %%al,%1; loop 0b" \
+				      : "=c"(__ecx) : "N"(0x5f), "0"(170000));\
+	} \
+} while (0)
+#endif
 
 #define PAGE_BUG(page) do { \
 	BUG(); \

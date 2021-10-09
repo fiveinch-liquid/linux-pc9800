@@ -89,7 +89,7 @@ extern struct cpuinfo_x86 cpu_data[];
 #define cpu_has_xmm	(test_bit(X86_FEATURE_XMM,  boot_cpu_data.x86_capability))
 #define cpu_has_fpu	(test_bit(X86_FEATURE_FPU,  boot_cpu_data.x86_capability))
 
-extern char ignore_irq13;
+extern char ignore_fpu_irq;
 
 extern void identify_cpu(struct cpuinfo_x86 *);
 extern void print_cpu_info(struct cpuinfo_x86 *);
@@ -246,12 +246,19 @@ static inline void clear_in_cr4 (unsigned long mask)
 /*
  * Bus types (default is ISA, but people can check others with these..)
  */
+#ifndef CONFIG_PC9800
 #ifdef CONFIG_EISA
 extern int EISA_bus;
 #else
 #define EISA_bus (0)
 #endif
 extern int MCA_bus;
+#else
+#define EISA_bus 0
+#define EISA_bus__is_a_macro	/* for versions in ksyms.c */
+#define MCA_bus	0
+#define MCA_bus__is_a_macro	/* for versions in ksyms.c */
+#endif
 
 /* from system description table in BIOS.  Mostly for MCA use, but
 others may find it useful. */

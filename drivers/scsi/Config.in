@@ -47,7 +47,11 @@ if [ "$CONFIG_PCI" = "y" ]; then
 fi
 dep_tristate '7000FASST SCSI support' CONFIG_SCSI_7000FASST $CONFIG_SCSI
 dep_tristate 'ACARD SCSI support' CONFIG_SCSI_ACARD $CONFIG_SCSI
-dep_tristate 'Adaptec AHA152X/2825 support' CONFIG_SCSI_AHA152X $CONFIG_SCSI
+if [ "$CONFIG_PC9800" != "y" ]; then
+   dep_tristate 'Adaptec AHA152X/2825 support' CONFIG_SCSI_AHA152X $CONFIG_SCSI
+else
+   dep_tristate 'NEC PC-9801-100/AHA-1030P support' CONFIG_SCSI_AHA152X $CONFIG_SCSI
+fi
 dep_tristate 'Adaptec AHA1542 support' CONFIG_SCSI_AHA1542 $CONFIG_SCSI
 dep_tristate 'Adaptec AHA1740 support' CONFIG_SCSI_AHA1740 $CONFIG_SCSI
 source drivers/scsi/aic7xxx/Config.in
@@ -220,6 +224,9 @@ if [ "$CONFIG_ZORRO" = "y" ]; then
 #      bool 'Cyberstorm Mk III SCSI support (EXPERIMENTAL)' CONFIG_CYBERSTORMIII_SCSI
 #      bool 'GVP Turbo 040/060 SCSI support (EXPERIMENTAL)' CONFIG_GVP_TURBO_SCSI
    fi
+fi
+if [ "$CONFIG_PC9800" = "y" ]; then
+   dep_tristate 'NEC PC-9801-55 SCSI support' CONFIG_SCSI_PC980155 $CONFIG_SCSI
 fi
 
 endmenu

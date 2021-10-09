@@ -166,9 +166,23 @@ static struct hw_interrupt_type i8259A_irq_type = {
  */
 static unsigned int cached_irq_mask = 0xffff;
 
+#ifndef CONFIG_PC9800
+# define PIC_MASTER_CMD		0x20
+# define PIC_MASTER_IMR		0x21
+# define PIC_SLAVE_CMD		0xa0
+# define PIC_SLAVE_IMR		0xa1
+# define PIC_CASCADE_IR		2
+#else
+# define PIC_MASTER_CMD		0x00
+# define PIC_MASTER_IMR		0x02
+# define PIC_SLAVE_CMD		0x08
+# define PIC_SLAVE_IMR		0x0a
+# define PIC_CASCADE_IR		7
+#endif
+
 #define __byte(x,y) 	(((unsigned char *)&(y))[x])
-#define cached_21	(__byte(0,cached_irq_mask))
-#define cached_A1	(__byte(1,cached_irq_mask))
+#define cached_master_mask	(__byte(0,cached_irq_mask))
+#define cached_slave_mask	(__byte(1,cached_irq_mask))
 
 /*
  * Not all IRQs can be routed through the IO-APIC, eg. on certain (older)
@@ -189,9 +203,9 @@ void disable_8259A_irq(unsigned int irq)
 	spin_lock_irqsave(&i8259A_lock, flags);
 	cached_irq_mask |= mask;
 	if (irq & 8)
-		outb(cached_A1,0xA1);
+		outb(cached_slave_mask, PIC_SLAVE_IMR);
 	else
-		outb(cached_21,0x21);
+		outb(cached_master_mask, PIC_MASTER_IMR);
 	spin_unlock_irqrestore(&i8259A_lock, flags);
 }
 
@@ -203,9 +217,9 @@ void enable_8259A_irq(unsigned int irq)
 	spin_lock_irqsave(&i8259A_lock, flags);
 	cached_irq_mask &= mask;
 	if (irq & 8)
-		outb(cached_A1,0xA1);
+		outb(cached_slave_mask, PIC_SLAVE_IMR);
 	else
-		outb(cached_21,0x21);
+		outb(cached_master_mask, PIC_MASTER_IMR);
 	spin_unlock_irqrestore(&i8259A_lock, flags);
 }
 
@@ -217,9 +231,9 @@ int i8259A_irq_pending(unsigned int irq)
 
 	spin_lock_irqsave(&i8259A_lock, flags);
 	if (irq < 8)
-		ret = inb(0x20) & mask;
+		ret = inb(PIC_MASTER_CMD) & mask;
 	else
-		ret = inb(0xA0) & (mask >> 8);
+		ret = inb(PIC_SLAVE_CMD) & (mask >> 8);
 	spin_unlock_irqrestore(&i8259A_lock, flags);
 
 	return ret;
@@ -245,14 +259,14 @@ static inline int i8259A_irq_real(unsigned int irq)
 	int irqmask = 1<<irq;
 
 	if (irq < 8) {
-		outb(0x0B,0x20);		/* ISR register */
-		value = inb(0x20) & irqmask;
-		outb(0x0A,0x20);		/* back to the IRR register */
+		outb(0x0B,PIC_MASTER_CMD);	/* ISR register */
+		value = inb(PIC_MASTER_CMD) & irqmask;
+		outb(0x0A,PIC_MASTER_CMD);	/* back to the IRR register */
 		return value;
 	}
-	outb(0x0B,0xA0);		/* ISR register */
-	value = inb(0xA0) & (irqmask >> 8);
-	outb(0x0A,0xA0);		/* back to the IRR register */
+	outb(0x0B,PIC_SLAVE_CMD);	/* ISR register */
+	value = inb(PIC_SLAVE_CMD) & (irqmask >> 8);
+	outb(0x0A,PIC_SLAVE_CMD);	/* back to the IRR register */
 	return value;
 }
 
@@ -289,14 +303,14 @@ void mask_and_ack_8259A(unsigned int irq)
 
 handle_real_irq:
 	if (irq & 8) {
-		inb(0xA1);		/* DUMMY - (do we need this?) */
-		outb(cached_A1,0xA1);
-		outb(0x60+(irq&7),0xA0);/* 'Specific EOI' to slave */
-		outb(0x62,0x20);	/* 'Specific EOI' to master-IRQ2 */
+		inb(PIC_SLAVE_IMR);	/* DUMMY - (do we need this?) */
+		outb(cached_slave_mask, PIC_SLAVE_IMR);
+		outb(0x60+(irq&7),PIC_SLAVE_CMD);/* 'Specific EOI' to slave */
+		outb(0x60+PIC_CASCADE_IR,PIC_MASTER_CMD); /* 'Specific EOI' to master-IRQ2 */
 	} else {
-		inb(0x21);		/* DUMMY - (do we need this?) */
-		outb(cached_21,0x21);
-		outb(0x60+irq,0x20);	/* 'Specific EOI' to master */
+		inb(PIC_MASTER_IMR);	/* DUMMY - (do we need this?) */
+		outb(cached_master_mask, PIC_MASTER_IMR);
+		outb(0x60+irq,PIC_MASTER_CMD);	/* 'Specific EOI to master */
 	}
 	spin_unlock_irqrestore(&i8259A_lock, flags);
 	return;
@@ -338,26 +352,39 @@ void __init init_8259A(int auto_eoi)
 
 	spin_lock_irqsave(&i8259A_lock, flags);
 
-	outb(0xff, 0x21);	/* mask all of 8259A-1 */
-	outb(0xff, 0xA1);	/* mask all of 8259A-2 */
+	outb(0xff, PIC_MASTER_IMR);	/* mask all of 8259A-1 */
+	outb(0xff, PIC_SLAVE_IMR);	/* mask all of 8259A-2 */
 
 	/*
 	 * outb_p - this has to work on a wide range of PC hardware.
 	 */
-	outb_p(0x11, 0x20);	/* ICW1: select 8259A-1 init */
-	outb_p(0x20 + 0, 0x21);	/* ICW2: 8259A-1 IR0-7 mapped to 0x20-0x27 */
-	outb_p(0x04, 0x21);	/* 8259A-1 (the master) has a slave on IR2 */
+	outb_p(0x11, PIC_MASTER_CMD);	/* ICW1: select 8259A-1 init */
+	outb_p(0x20 + 0, PIC_MASTER_IMR);	/* ICW2: 8259A-1 IR0-7 mapped to 0x20-0x27 */
+	outb_p(1U << PIC_CASCADE_IR,
+	       PIC_MASTER_IMR);	/* 8259A-1 (the master) has a slave on IR2 */
+#ifndef CONFIG_PC9800
 	if (auto_eoi)
-		outb_p(0x03, 0x21);	/* master does Auto EOI */
+		outb_p(0x03, PIC_MASTER_IMR);	/* master does Auto EOI */
 	else
-		outb_p(0x01, 0x21);	/* master expects normal EOI */
+		outb_p(0x01, PIC_MASTER_IMR);	/* master expects normal EOI */
+#else
+	if (auto_eoi)
+		outb_p(0x1f, PIC_MASTER_IMR);	/* master does Auto EOI */
+	else
+		outb_p(0x1d, PIC_MASTER_IMR);	/* master expects normal EOI */
+#endif
 
-	outb_p(0x11, 0xA0);	/* ICW1: select 8259A-2 init */
-	outb_p(0x20 + 8, 0xA1);	/* ICW2: 8259A-2 IR0-7 mapped to 0x28-0x2f */
-	outb_p(0x02, 0xA1);	/* 8259A-2 is a slave on master's IR2 */
-	outb_p(0x01, 0xA1);	/* (slave's support for AEOI in flat mode
-				    is to be investigated) */
-
+	outb_p(0x11, PIC_SLAVE_CMD);	/* ICW1: select 8259A-2 init */
+	outb_p(0x20 + 8, PIC_SLAVE_IMR);	/* ICW2: 8259A-2 IR0-7 mapped to 0x28-0x2f */
+	outb_p(PIC_CASCADE_IR,
+	       PIC_SLAVE_IMR);	/* 8259A-2 is a slave on master's IR2 */
+#ifndef CONFIG_PC9800
+	outb_p(0x01, PIC_SLAVE_IMR); /* (slave's support for AEOI in flat mode
+					is to be investigated) */
+#else
+	outb_p(0x09, PIC_SLAVE_IMR); /* (slave's support for AEOI in flat mode
+					is to be investigated) */
+#endif
 	if (auto_eoi)
 		/*
 		 * in AEOI mode we just have to mask the interrupt
@@ -369,8 +396,8 @@ void __init init_8259A(int auto_eoi)
 
 	udelay(100);		/* wait for 8259A to initialize */
 
-	outb(cached_21, 0x21);	/* restore master IRQ mask */
-	outb(cached_A1, 0xA1);	/* restore slave IRQ mask */
+	outb(cached_master_mask, PIC_MASTER_IMR); /* restore master IRQ mask */
+	outb(cached_slave_mask, PIC_SLAVE_IMR);	  /* restore slave IRQ mask */
 
 	spin_unlock_irqrestore(&i8259A_lock, flags);
 }
@@ -386,22 +413,33 @@ void __init init_8259A(int auto_eoi)
  * leads to races. IBM designers who came up with it should
  * be shot.
  */
- 
+
+/*
+ * =PC9800NOTE= In NEC PC-9800, we use irq8 instead of irq13!
+ */
+
 static void math_error_irq(int cpl, void *dev_id, struct pt_regs *regs)
 {
 	extern void math_error(void *);
+#ifndef CONFIG_PC9800
 	outb(0,0xF0);
-	if (ignore_irq13 || !boot_cpu_data.hard_math)
+#endif
+	if (ignore_fpu_irq || !boot_cpu_data.hard_math)
 		return;
 	math_error((void *)regs->eip);
 }
 
+#ifndef CONFIG_PC9800
 /*
  * New motherboards sometimes make IRQ 13 be a PCI interrupt,
  * so allow interrupt sharing.
  */
 static struct irqaction irq13 = { math_error_irq, 0, 0, "fpu", NULL, NULL };
+#else
+static struct irqaction irq8 = { math_error_irq, 0, 0, "fpu", NULL, NULL };
+#endif
 
+#ifndef CONFIG_PC9800
 /*
  * IRQ2 is cascade interrupt to second interrupt controller
  */
@@ -409,6 +447,13 @@ static struct irqaction irq13 = { math_error_irq, 0, 0, "fpu", NULL, NULL };
 #ifndef CONFIG_VISWS
 static struct irqaction irq2 = { no_action, 0, 0, "cascade", NULL, NULL};
 #endif
+#else /* CONFIG_PC9800 */
+/*
+ * IRQ7 is cascade interrupt to second interrupt controller
+ */
+
+static struct irqaction irq7 = { no_action, 0, 0, "cascade", NULL, NULL};
+#endif /* CONFIG_PC9800 */
 
 
 void __init init_ISA_irqs (void)
@@ -489,6 +534,7 @@ void __init init_IRQ(void)
 	 * Set the clock to HZ Hz, we already have a valid
 	 * vector now:
 	 */
+#ifndef CONFIG_PC9800
 	outb_p(0x34,0x43);		/* binary, mode 2, LSB/MSB, ch 0 */
 	outb_p(LATCH & 0xff , 0x40);	/* LSB */
 	outb(LATCH >> 8 , 0x40);	/* MSB */
@@ -496,11 +542,23 @@ void __init init_IRQ(void)
 #ifndef CONFIG_VISWS
 	setup_irq(2, &irq2);
 #endif
+#else
+	outb_p(0x34, 0x77);		/* binary, mode 2, LSB/MSB, ch 0 */
+	outb_p(LATCH, 0x71);		/* LSB */
+	outb(LATCH >> 8, 0x71);		/* MSB */
+
+	setup_irq(7, &irq7);
+	setup_irq(8, &irq8);
+#endif
 
 	/*
 	 * External FPU? Set up irq13 if so, for
 	 * original braindamaged IBM FERR coupling.
 	 */
 	if (boot_cpu_data.hard_math && !cpu_has_fpu)
+#ifndef CONFIG_PC9800
 		setup_irq(13, &irq13);
+#else
+		setup_irq(8, &irq8);
+#endif
 }

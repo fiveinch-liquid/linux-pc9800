@@ -41,6 +41,7 @@
 #include <linux/delay.h>
 #include <linux/init.h>
 #include <linux/smp.h>
+#include <linux/config.h>
 
 #include <asm/io.h>
 #include <asm/smp.h>
@@ -51,9 +52,12 @@
 #include <asm/uaccess.h>
 #include <asm/processor.h>
 
+#ifndef CONFIG_PC9800
 #include <linux/mc146818rtc.h>
+#else
+#include <linux/upd4990a.h>
+#endif
 #include <linux/timex.h>
-#include <linux/config.h>
 
 #include <asm/fixmap.h>
 #include <asm/cobalt.h>
@@ -118,6 +122,15 @@ spinlock_t i8253_lock = SPIN_LOCK_UNLOCKED;
 
 extern spinlock_t i8259A_lock;
 
+/* This should be shared with i8259.c...  */
+#ifndef CONFIG_PC9800
+# define PIC_MASTER_ISR		0x20
+#else
+# define PIC_MASTER_ISR		0x00
+#endif
+#define PIC_MASTER_POLL		PIC_MASTER_ISR
+#define PIC_MASTER_OCW3		PIC_MASTER_ISR
+
 #ifndef CONFIG_X86_TSC
 
 /* This function must be called with interrupts disabled 
@@ -166,10 +179,17 @@ static unsigned long do_slow_gettimeoffset(void)
 
 	/* gets recalled with irq locally disabled */
 	spin_lock(&i8253_lock);
+
 	/* timer count may underflow right here */
+#ifndef CONFIG_PC9800
 	outb_p(0x00, 0x43);	/* latch the count ASAP */
 
 	count = inb_p(0x40);	/* read the latched count */
+#else /* !CONFIG_PC9800 */
+	outb_p(0x00, 0x77);	/* latch the count ASAP */
+
+	count = inb_p(0x71);	/* read the latched count */
+#endif
 
 	/*
 	 * We do this guaranteed double memory access instead of a _p 
@@ -177,7 +197,11 @@ static unsigned long do_slow_gettimeoffset(void)
 	 */
  	jiffies_t = jiffies;
 
+#ifndef CONFIG_PC9800
 	count |= inb_p(0x40) << 8;
+#else
+	count |= inb_p(0x71) << 8;
+#endif
 	spin_unlock(&i8253_lock);
 
 	/*
@@ -204,7 +228,8 @@ static unsigned long do_slow_gettimeoffset(void)
 			 * This is tricky when I/O APICs are used;
 			 * see do_timer_interrupt().
 			 */
-			i = inb(0x20);
+			i = inb(PIC_MASTER_ISR);
+
 			spin_unlock(&i8259A_lock);
 
 			/* assumption about timer being IRQ0 */
@@ -318,10 +343,15 @@ static int set_rtc_mmss(unsigned long nowtime)
 {
 	int retval = 0;
 	int real_seconds, real_minutes, cmos_minutes;
+#ifndef CONFIG_PC9800
 	unsigned char save_control, save_freq_select;
+#else
+	struct upd4990a_raw_data data;
+#endif
 
 	/* gets recalled with irq locally disabled */
 	spin_lock(&rtc_lock);
+#ifndef CONFIG_PC9800
 	save_control = CMOS_READ(RTC_CONTROL); /* tell the clock it's being set */
 	CMOS_WRITE((save_control|RTC_SET), RTC_CONTROL);
 
@@ -331,6 +361,10 @@ static int set_rtc_mmss(unsigned long nowtime)
 	cmos_minutes = CMOS_READ(RTC_MINUTES);
 	if (!(save_control & RTC_DM_BINARY) || RTC_ALWAYS_BCD)
 		BCD_TO_BIN(cmos_minutes);
+#else
+	upd4990a_get_time (&data, 1);
+	cmos_minutes = (data.min >> 4) * 10 + (data.min & 0xF);
+#endif
 
 	/*
 	 * since we're only adjusting minutes and seconds,
@@ -345,12 +379,23 @@ static int set_rtc_mmss(unsigned long nowtime)
 	real_minutes %= 60;
 
 	if (abs(real_minutes - cmos_minutes) < 30) {
+#ifndef CONFIG_PC9800
 		if (!(save_control & RTC_DM_BINARY) || RTC_ALWAYS_BCD) {
 			BIN_TO_BCD(real_seconds);
 			BIN_TO_BCD(real_minutes);
 		}
 		CMOS_WRITE(real_seconds,RTC_SECONDS);
 		CMOS_WRITE(real_minutes,RTC_MINUTES);
+#else
+		u8 temp_seconds = (real_seconds / 10) * 16 + real_seconds % 10;
+		u8 temp_minutes = (real_minutes / 10) * 16 + real_minutes % 10;
+
+		if (data.sec != temp_seconds || data.min != temp_minutes) {
+			data.sec = temp_seconds;
+			data.min = temp_minutes;
+			upd4990a_set_time (&data, 1);
+		}
+#endif
 	} else {
 		printk(KERN_WARNING
 		       "set_rtc_mmss: can't update from %d to %d\n",
@@ -358,6 +403,7 @@ static int set_rtc_mmss(unsigned long nowtime)
 		retval = -1;
 	}
 
+#ifndef CONFIG_PC9800
 	/* The following flags have to be released exactly in this order,
 	 * otherwise the DS12887 (popular MC146818A clone with integrated
 	 * battery and quartz) will not reset the oscillator and will not
@@ -367,6 +413,14 @@ static int set_rtc_mmss(unsigned long nowtime)
 	 */
 	CMOS_WRITE(save_control, RTC_CONTROL);
 	CMOS_WRITE(save_freq_select, RTC_FREQ_SELECT);
+#else
+	/* uPD4990A users' manual says we should issue Register Hold
+	 * command after reading time, or future Time Read command
+	 * may not work.  When we have set the time, this also starts
+	 * the clock.
+	 */
+	upd4990a_serial_command (UPD4990A_REGISTER_HOLD);
+#endif
 	spin_unlock(&rtc_lock);
 
 	return retval;
@@ -392,9 +446,9 @@ static inline void do_timer_interrupt(int irq, void *dev_id, struct pt_regs *reg
 		 * on an 82489DX-based system.
 		 */
 		spin_lock(&i8259A_lock);
-		outb(0x0c, 0x20);
+		outb(0x0c, PIC_MASTER_OCW3);
 		/* Ack the IRQ; AEOI will end it automatically. */
-		inb(0x20);
+		inb(PIC_MASTER_POLL);
 		spin_unlock(&i8259A_lock);
 	}
 #endif
@@ -422,6 +476,7 @@ static inline void do_timer_interrupt(int irq, void *dev_id, struct pt_regs *reg
 	 * CMOS clock accordingly every ~11 minutes. Set_rtc_mmss() has to be
 	 * called as close as possible to 500 ms before the new second starts.
 	 */
+#ifndef CONFIG_PC9800
 	if ((time_status & STA_UNSYNC) == 0 &&
 	    xtime.tv_sec > last_rtc_update + 660 &&
 	    xtime.tv_usec >= 500000 - ((unsigned) tick) / 2 &&
@@ -431,6 +486,25 @@ static inline void do_timer_interrupt(int irq, void *dev_id, struct pt_regs *reg
 		else
 			last_rtc_update = xtime.tv_sec - 600; /* do it again in 60 s */
 	}
+#else  /* CONFIG_PC9800 */
+	/*
+	 * Because PC-9800's RTC (NEC uPD4990A) does not allow setting
+	 * time partially, we always have to read-modify-write the
+	 * entire time (including year) so that set_rtc_mmss() will
+	 * take quite much time to execute.  You may want to relax
+	 * RTC resetting interval (currently ~11 minuts)...
+	 */
+	if ((time_status & STA_UNSYNC) == 0 &&
+	    xtime.tv_sec > last_rtc_update + 660 &&
+	    xtime.tv_usec >= 1000000 - ((unsigned) tick) / 2 &&
+	    xtime.tv_usec <= ((unsigned) tick) / 2) {
+		if (set_rtc_mmss(xtime.tv_sec) == 0)
+			last_rtc_update = xtime.tv_sec;
+		else
+			last_rtc_update = xtime.tv_sec - 600; /* do it again in 60 s */
+	}
+#endif /* CONFIG_PC9800 */
+
 	    
 #ifdef CONFIG_MCA
 	if( MCA_bus ) {
@@ -488,10 +562,17 @@ static void timer_interrupt(int irq, void *dev_id, struct pt_regs *regs)
 		rdtscl(last_tsc_low);
 
 		spin_lock(&i8253_lock);
+#ifndef CONFIG_PC9800
 		outb_p(0x00, 0x43);     /* latch the count ASAP */
 
 		count = inb_p(0x40);    /* read the latched count */
 		count |= inb(0x40) << 8;
+#else /* CONFIG_PC9800 */
+		outb_p(0x00, 0x77);     /* latch the count ASAP */
+
+		count = inb_p(0x71);    /* read the latched count */
+		count |= inb(0x71) << 8;
+#endif /* !CONFIG_PC9800 */
 		spin_unlock(&i8253_lock);
 
 		count = ((LATCH-1) - count) * TICK_SIZE;
@@ -507,6 +588,8 @@ static void timer_interrupt(int irq, void *dev_id, struct pt_regs *regs)
 /* not static: needed by APM */
 unsigned long get_cmos_time(void)
 {
+#ifndef CONFIG_PC9800
+
 	unsigned int year, mon, day, hour, min, sec;
 	int i;
 
@@ -542,6 +625,71 @@ unsigned long get_cmos_time(void)
 	if ((year += 1900) < 1970)
 		year += 100;
 	return mktime(year, mon, day, hour, min, sec);
+
+#else /* CONFIG_PC9800 */
+
+#define RTC_SANITY_CHECK
+
+	int i;
+	u8 prev, cur;
+	unsigned int year;
+#ifdef RTC_SANITY_CHECK
+	int retry_count;
+#endif
+
+	struct upd4990a_raw_data data;
+
+#ifdef RTC_SANITY_CHECK
+	retry_count = 0;
+ retry:
+#endif
+	/* Connect uPD4990A's DATA OUT pin to its 1Hz reference clock. */
+	upd4990a_serial_command (UPD4990A_REGISTER_HOLD);
+
+	/* Catch rising edge of reference clock.  */
+	prev = ~UPD4990A_READ_DATA();
+	for (i = 0; i < 1800000; i++) { /* may take up to 1 second... */
+		__asm__ ("outb %%al,%0" : : "N" (0x5F)); /* 0.6usec delay */
+		cur = UPD4990A_READ_DATA();
+		if (!(prev & cur & 1))
+			break;
+		prev = ~cur;
+	}
+
+	upd4990a_get_time (&data, 0);
+
+#ifdef RTC_SANITY_CHECK
+# define BCD_VALID_P(x, hi)	(((x) & 0x0F) <= 9 && (x) <= 0x ## hi)
+# define DATA			((const unsigned char *) &data)
+
+	if (!BCD_VALID_P (data.sec, 59) ||
+	    !BCD_VALID_P (data.min, 59) ||
+	    !BCD_VALID_P (data.hour, 23) ||
+	    data.mday == 0 || !BCD_VALID_P (data.mday, 31) ||
+	    data.wday > 6 ||
+	    data.mon < 1 || 12 < data.mon ||
+	    !BCD_VALID_P (data.year, 99)) {
+		printk (KERN_ERR "RTC clock data is invalid! "
+			"(%02X %02X %02X %02X %02X %02X) - ",
+			DATA[0], DATA[1], DATA[2], DATA[3], DATA[4], DATA[5]);
+		if (++retry_count < 3) {
+			printk ("retrying (%d)\n", retry_count);
+			goto retry;
+		}
+		printk ("giving up, continuing\n");
+	}
+
+# undef BCD_VALID_P
+# undef DATA
+#endif /* RTC_SANITY_CHECK */
+
+#define CVT(x)	(((x) & 0xF) + ((x) >> 4) * 10)
+	if ((year = CVT (data.year) + 1900) < 1995)
+		year += 100;
+	return mktime (year, data.mon, CVT (data.mday),
+		       CVT (data.hour), CVT (data.min), CVT (data.sec));
+#undef CVT
+#endif /* !CONFIG_PC9800 */
 }
 
 static struct irqaction irq0  = { timer_interrupt, SA_INTERRUPT, 0, "timer", NULL, NULL};
@@ -555,11 +703,16 @@ static struct irqaction irq0  = { timer_interrupt, SA_INTERRUPT, 0, "timer", NUL
  * device.
  */
 
+#ifndef CONFIG_PC9800
 #define CALIBRATE_LATCH	(5 * LATCH)
+#else
+#define CALIBRATE_LATCH	(50 * 307200/1000) /* 0.050sec * 307200Hz = 15360 */
+#endif
 #define CALIBRATE_TIME	(5 * 1000020/HZ)
 
 static unsigned long __init calibrate_tsc(void)
 {
+#ifndef CONFIG_PC9800
        /* Set the Gate high, disable speaker */
 	outb((inb(0x61) & ~0x02) | 0x01, 0x61);
 
@@ -573,24 +726,46 @@ static unsigned long __init calibrate_tsc(void)
 	outb(0xb0, 0x43);			/* binary, mode 0, LSB/MSB, Ch 2 */
 	outb(CALIBRATE_LATCH & 0xff, 0x42);	/* LSB of count */
 	outb(CALIBRATE_LATCH >> 8, 0x42);	/* MSB of count */
+#endif
 
 	{
 		unsigned long startlow, starthigh;
 		unsigned long endlow, endhigh;
+#ifndef CONFIG_PC9800
 		unsigned long count;
+#else
+		/*
+		 * PC-9800:
+		 *  CTC cannot be used because some models (especially
+		 *  note-machines) may disable clock to speaker channel (#1)
+		 *  unless speaker is enabled.  We use ARTIC instead.
+		 */
+		unsigned short count;
+
+		for (count = inw (0x5c); inw (0x5c) == count; )
+			;
+#endif
 
 		rdtsc(startlow,starthigh);
+#ifndef CONFIG_PC9800
 		count = 0;
 		do {
 			count++;
 		} while ((inb(0x61) & 0x20) == 0);
+#else
+		count = inw (0x5c);
+		while ((unsigned short)(inw (0x5c) - count) < CALIBRATE_LATCH)
+			;
+#endif
 		rdtsc(endlow,endhigh);
 
 		last_tsc_low = endlow;
 
+#ifndef CONFIG_PC9800
 		/* Error: ECTCNEVERSET */
 		if (count <= 1)
 			goto bad_ctc;
+#endif
 
 		/* 64-bit subtract - gcc just messes up with long longs */
 		__asm__("subl %2,%0\n\t"

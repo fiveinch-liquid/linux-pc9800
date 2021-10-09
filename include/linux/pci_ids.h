@@ -410,7 +410,22 @@
 #define PCI_DEVICE_ID_MIRO_36050	0x5601
 
 #define PCI_VENDOR_ID_NEC		0x1033
-#define PCI_DEVICE_ID_NEC_PCX2		0x0046
+/* description is from NetBSD/pc98 (based on NetBSD 1.3.3) */
+#define PCI_DEVICE_ID_NEC_CBUS_1	0x0001 /* PCI-Cbus Bridge */
+#define PCI_DEVICE_ID_NEC_LOCAL		0x0002 /* Local Bridge */
+#define PCI_DEVICE_ID_NEC_ATM		0x0003 /* ATM LAN Controller */
+#define PCI_DEVICE_ID_NEC_R4000		0x0004 /* R4000 Bridge */
+#define PCI_DEVICE_ID_NEC_486		0x0005 /* 486 Like Peripheral Bus Bridge */
+#define PCI_DEVICE_ID_NEC_ACCEL_1	0x0006 /* Graphic Accelerator */
+#define PCI_DEVICE_ID_NEC_UXBUS		0x0007 /* UX-Bus Bridge */
+#define PCI_DEVICE_ID_NEC_ACCEL_2	0x0006 /* Graphic Accelerator */
+#define PCI_DEVICE_ID_NEC_GRAPH		0x0009 /* PCI-CoreGraph Bridge */
+#define PCI_DEVICE_ID_NEC_VL		0x0016 /* PCI-VL Bridge */
+#define PCI_DEVICE_ID_NEC_STARALPHA2	0x002c /* STAR ALPHA2 */
+#define PCI_DEVICE_ID_NEC_CBUS_2	0x002d /* PCI-Cbus Bridge */
+#define PCI_DEVICE_ID_NEC_USB		0x0035 /* PCI-USB Host */
+#define PCI_DEVICE_ID_NEC_CBUS_3	0x003b
+#define PCI_DEVICE_ID_NEC_PCX2		0x0046 /* PowerVR */
 #define PCI_DEVICE_ID_NEC_NILE4		0x005a
 #define PCI_DEVICE_ID_NEC_VRC5476       0x009b
 
@@ -1103,6 +1118,8 @@
 #define PCI_VENDOR_ID_ATT		0x11c1
 #define PCI_DEVICE_ID_ATT_L56XMF	0x0440
 #define PCI_DEVICE_ID_ATT_VENUS_MODEM	0x480
+
+#define PCI_VENDOR_ID_NEC2		0x11c3 /* NEC (2nd) */
 
 #define PCI_VENDOR_ID_SPECIALIX		0x11cb
 #define PCI_DEVICE_ID_SPECIALIX_IO8	0x2000

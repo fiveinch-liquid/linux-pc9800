@@ -105,7 +105,11 @@ if [ "$CONFIG_NET_ETHERNET" = "y" ]; then
       dep_tristate '    NI6510 support' CONFIG_NI65 $CONFIG_ISA
    fi
    if [ "$CONFIG_ISA" = "y" -o "$CONFIG_MCA" = "y" ]; then
+    if [ "$CONFIG_PC9800" != "y" ]; then
       dep_tristate '  AT1700/1720 support (EXPERIMENTAL)' CONFIG_AT1700 $CONFIG_EXPERIMENTAL
+    else
+      dep_tristate '  Allied Telesis RE1000Plus support (EXPERIMENTAL)' CONFIG_AT1700 $CONFIG_EXPERIMENTAL
+    fi
    fi
    if [ "$CONFIG_ISA" = "y" -o "$CONFIG_EISA" = "y" -o "$CONFIG_MCA" = "y" ]; then
       tristate '  DEPCA, DE10x, DE200, DE201, DE202, DE422 support' CONFIG_DEPCA
@@ -113,6 +117,7 @@ if [ "$CONFIG_NET_ETHERNET" = "y" ]; then
    if [ "$CONFIG_ISA" = "y" -o "$CONFIG_EISA" = "y" -o "$CONFIG_PCI" = "y" ]; then
       tristate '  HP 10/100VG PCLAN (ISA, EISA, PCI) support' CONFIG_HP100
    fi
+  if [ "$CONFIG_PC9800" != "y" ]; then
    dep_bool '  Other ISA cards' CONFIG_NET_ISA $CONFIG_ISA
    if [ "$CONFIG_NET_ISA" = "y" ]; then
       tristate '    Cabletron E21xx support' CONFIG_E2100
@@ -138,6 +143,25 @@ if [ "$CONFIG_NET_ETHERNET" = "y" ]; then
       tristate '  NE/2 (ne2000 MCA version) support' CONFIG_NE2_MCA
       tristate '  IBM LAN Adapter/A support' CONFIG_IBMLANA
    fi
+  else	# CONFIG_PC9800 = y
+   bool '  NEC PC-9800 C-bus cards' CONFIG_NET_CBUS
+   if [ "$CONFIG_NET_CBUS" = "y" ]; then
+      tristate '    Most NE2000-based Ethernet support' CONFIG_NE2K_CBUS
+      if [ "$CONFIG_NE2K_CBUS" != "n" ]; then
+	 bool '      Melco EGY-98 support' CONFIG_NE2K_CBUS_EGY98
+	 bool '      Melco LGY-98 support' CONFIG_NE2K_CBUS_LGY98
+	 bool '      ICM IF-27xxET support' CONFIG_NE2K_CBUS_ICM
+	 bool '      I-O DATA LA-98 support (NOT TESTED!)' CONFIG_NE2K_CBUS_IOLA98
+	 bool '      Contec C-NET(98)E/L support (NOT TESTED!)' CONFIG_NE2K_CBUS_CNET98EL
+	 if [ "$CONFIG_NE2K_CBUS_CNET98EL" != "n" ]; then
+	    hex '        C-NET(98)E/L I/O base address (aaed or 55ed)' CONFIG_NE2K_CBUS_CNET98EL_IO_BASE aaed
+	 fi
+	 bool '      Allied Telesis LA-98 Support (NOT TESTED!)' CONFIG_NE2K_CBUS_ATLA98
+	 bool '      ELECOM Laneed LD-BDN[123]A Support (NOT TESTED!)' CONFIG_NE2K_CBUS_BDN
+	 bool '      NEC PC-9801-108 Support (NOT TESTED!)' CONFIG_NE2K_CBUS_NEC108
+      fi
+   fi
+  fi	# CONFIG_PC9800
    if [ "$CONFIG_ISA" = "y" -o "$CONFIG_PCI" = "y" ]; then
       bool '  EISA, VLB, PCI and on board controllers' CONFIG_NET_PCI
    else

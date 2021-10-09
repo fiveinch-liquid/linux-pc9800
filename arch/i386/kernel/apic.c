@@ -411,9 +411,15 @@ static unsigned int __init get_8254_timer_count(void)
 
 	spin_lock_irqsave(&i8253_lock, flags);
 
+#ifndef CONFIG_PC9800
 	outb_p(0x00, 0x43);
 	count = inb_p(0x40);
 	count |= inb_p(0x40) << 8;
+#else
+	outb_p(0x00, 0x77);
+	count = inb_p(0x71);
+	count |= inb_p(0x71) << 8;
+#endif
 
 	spin_unlock_irqrestore(&i8253_lock, flags);
 

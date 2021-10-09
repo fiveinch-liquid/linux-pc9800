@@ -30,6 +30,7 @@
 /* Uncomment the following if you want verbose error reports. */
 /* #define VERBOSE_ERRORS */
   
+#include <linux/config.h>
 #include <linux/errno.h>
 #include <linux/signal.h>
 #include <linux/sched.h>
@@ -65,6 +66,18 @@
 static int revalidate_hddisk(kdev_t, int);
 
 #define	HD_DELAY	0
+#ifndef CONFIG_PC9800
+#define HD_SLOW_IO
+#else
+#undef HD_SLOW_IO
+#endif
+#ifdef HD_SLOW_IO
+# define hd_outb	outb_p
+# define hd_inb		inb_p
+#else
+# define hd_outb	outb
+# define hd_inb		inb
+#endif
 
 #define MAX_ERRORS     16	/* Max read/write errors/sector */
 #define RESET_FREQ      8	/* Reset controller every 8th retry */
@@ -95,12 +108,22 @@ struct hd_i_struct {
 	unsigned int head,sect,cyl,wpcom,lzone,ctl;
 };
 	
+#ifndef CONFIG_PC9800
 #ifdef HD_TYPE
 static struct hd_i_struct hd_info[] = { HD_TYPE };
 static int NR_HD = ((sizeof (hd_info))/(sizeof (struct hd_i_struct)));
 #else
 static struct hd_i_struct hd_info[MAX_HD];
 static int NR_HD;
+#endif
+#else
+#ifdef HD_TYPE
+struct hd_i_struct hd_info[] = { HD_TYPE };
+static int NR_HD = ((sizeof (hd_info))/(sizeof (struct hd_i_struct)));
+#else
+struct hd_i_struct hd_info[MAX_HD];
+static int NR_HD;
+#endif
 #endif
 
 static struct hd_struct hd[MAX_HD<<6];
@@ -185,7 +208,7 @@ static void dump_status (const char *msg, unsigned int stat)
 	if ((stat & ERR_STAT) == 0) {
 		hd_error = 0;
 	} else {
-		hd_error = inb(HD_ERROR);
+		hd_error = hd_inb(HD_ERROR);
 		printk("hd%c: %s: error=0x%02x { ", devc, msg, hd_error & 0xff);
 		if (hd_error & BBD_ERR)		printk("BadSector ");
 		if (hd_error & ECC_ERR)		printk("UncorrectableError ");
@@ -195,8 +218,8 @@ static void dump_status (const char *msg, unsigned int stat)
 		if (hd_error & MARK_ERR)	printk("AddrMarkNotFound ");
 		printk("}");
 		if (hd_error & (BBD_ERR|ECC_ERR|ID_ERR|MARK_ERR)) {
-			printk(", CHS=%d/%d/%d", (inb(HD_HCYL)<<8) + inb(HD_LCYL),
-				inb(HD_CURRENT) & 0xf, inb(HD_SECTOR));
+			printk(", CHS=%d/%d/%d", (hd_inb(HD_HCYL)<<8) + hd_inb(HD_LCYL),
+				hd_inb(HD_CURRENT) & 0xf, hd_inb(HD_SECTOR));
 			if (!QUEUE_EMPTY)
 				printk(", sector=%ld", CURRENT->sector);
 		}
@@ -207,7 +230,7 @@ static void dump_status (const char *msg, unsigned int stat)
 	if ((stat & ERR_STAT) == 0) {
 		hd_error = 0;
 	} else {
-		hd_error = inb(HD_ERROR);
+		hd_error = hd_inb(HD_ERROR);
 		printk("hd%c: %s: error=0x%02x.\n", devc, msg, hd_error & 0xff);
 	}
 #endif	/* verbose errors */
@@ -216,7 +239,7 @@ static void dump_status (const char *msg, unsigned int stat)
 
 void check_status(void)
 {
-	int i = inb_p(HD_STATUS);
+	unsigned char i = hd_inb(HD_STATUS);
 
 	if (!OK_STATUS(i)) {
 		dump_status("check_status", i);
@@ -230,14 +253,14 @@ static int controller_busy(void)
 	unsigned char status;
 
 	do {
-		status = inb_p(HD_STATUS);
+		status = hd_inb(HD_STATUS);
 	} while ((status & BUSY_STAT) && --retries);
 	return status;
 }
 
 static int status_ok(void)
 {
-	unsigned char status = inb_p(HD_STATUS);
+	unsigned char status = hd_inb(HD_STATUS);
 
 	if (status & BUSY_STAT)
 		return 1;	/* Ancient, but does it make sense??? */
@@ -257,7 +280,7 @@ static int controller_ready(unsigned int drive, unsigned int head)
 	do {
 		if (controller_busy() & BUSY_STAT)
 			return 0;
-		outb_p(0xA0 | (drive<<4) | head, HD_CURRENT);
+		hd_outb(0xA0 | (drive<<4) | head, HD_CURRENT);
 		if (status_ok())
 			return 1;
 	} while (--retry);
@@ -281,15 +304,32 @@ static void hd_out(unsigned int drive,unsigned int nsect,unsigned int sect,
 		return;
 	}
 	SET_INTR(intr_addr);
-	outb_p(hd_info[drive].ctl,HD_CMD);
+	hd_outb(hd_info[drive].ctl,HD_CMD);
 	port=HD_DATA;
-	outb_p(hd_info[drive].wpcom>>2,++port);
-	outb_p(nsect,++port);
-	outb_p(sect,++port);
-	outb_p(cyl,++port);
-	outb_p(cyl>>8,++port);
-	outb_p(0xA0|(drive<<4)|head,++port);
-	outb_p(cmd,++port);
+#ifndef CONFIG_PC9800
+	hd_outb(hd_info[drive].wpcom>>2,++port);
+	hd_outb(nsect,++port);
+	hd_outb(sect,++port);
+	hd_outb(cyl,++port);
+	hd_outb(cyl>>8,++port);
+	hd_outb(0xA0|(drive<<4)|head,++port);
+	hd_outb(cmd,++port);
+#else
+	port += 2;
+	hd_outb(hd_info[drive].wpcom>>2, port);
+	port += 2;
+	hd_outb(nsect, port);
+	port += 2;
+	hd_outb(sect, port);
+	port += 2;
+	hd_outb(cyl, port);
+	port += 2;
+	hd_outb(cyl>>8, port);
+	port += 2;
+	hd_outb(0xA0|(drive<<4)|head, port);
+	port += 2;
+	hd_outb(cmd, port);
+#endif
 }
 
 static void hd_request (void);
@@ -300,7 +340,7 @@ static int drive_busy(void)
 	unsigned char c;
 
 	for (i = 0; i < 500000 ; i++) {
-		c = inb_p(HD_STATUS);
+		c = hd_inb(HD_STATUS);
 		if ((c & (BUSY_STAT | READY_STAT | SEEK_STAT)) == STAT_OK)
 			return 0;
 	}
@@ -312,13 +352,13 @@ static void reset_controller(void)
 {
 	int	i;
 
-	outb_p(4,HD_CMD);
+	hd_outb(4,HD_CMD);
 	for(i = 0; i < 1000; i++) barrier();
-	outb_p(hd_info[0].ctl & 0x0f,HD_CMD);
+	hd_outb(hd_info[0].ctl & 0x0f,HD_CMD);
 	for(i = 0; i < 1000; i++) barrier();
 	if (drive_busy())
 		printk("hd: controller still busy\n");
-	else if ((hd_error = inb(HD_ERROR)) != 1)
+	else if ((hd_error = hd_inb(HD_ERROR)) != 1)
 		printk("hd: controller reset failed: %02x\n",hd_error);
 }
 
@@ -357,7 +397,7 @@ repeat:
  */
 void unexpected_hd_interrupt(void)
 {
-	unsigned int stat = inb_p(HD_STATUS);
+	unsigned char stat = hd_inb(HD_STATUS);
 
 	if (stat & (BUSY_STAT|DRQ_STAT|ECC_STAT|ERR_STAT)) {
 		dump_status ("unexpected interrupt", stat);
@@ -389,10 +429,11 @@ static void bad_rw_intr(void)
 
 static inline int wait_DRQ(void)
 {
-	int retries = 100000, stat;
+	int retries = 100000;
+	unsigned char stat;
 
 	while (--retries > 0)
-		if ((stat = inb_p(HD_STATUS)) & DRQ_STAT)
+		if ((stat = hd_inb(HD_STATUS)) & DRQ_STAT)
 			return 0;
 	dump_status("wait_DRQ", stat);
 	return -1;
@@ -401,17 +442,18 @@ static inline int wait_DRQ(void)
 static void read_intr(void)
 {
 	int i, retries = 100000;
+	unsigned char b;
 
 	do {
-		i = (unsigned) inb_p(HD_STATUS);
-		if (i & BUSY_STAT)
+		b = hd_inb(HD_STATUS);
+		if (b & BUSY_STAT)
 			continue;
-		if (!OK_STATUS(i))
+		if (!OK_STATUS(b))
 			break;
-		if (i & DRQ_STAT)
+		if (b & DRQ_STAT)
 			goto ok_to_read;
 	} while (--retries > 0);
-	dump_status("read_intr", i);
+	dump_status("read_intr", b);
 	bad_rw_intr();
 	hd_request();
 	return;
@@ -425,7 +467,7 @@ ok_to_read:
 #ifdef DEBUG
 	printk("hd%c: read: sector %ld, remaining = %ld, buffer=0x%08lx\n",
 		dev+'a', CURRENT->sector, CURRENT->nr_sectors,
-		(unsigned long) CURRENT->buffer+512));
+		(unsigned long) CURRENT->buffer+512);
 #endif
 	if (CURRENT->current_nr_sectors <= 0)
 		end_request(1);
@@ -433,7 +475,7 @@ ok_to_read:
 		SET_INTR(&read_intr);
 		return;
 	}
-	(void) inb_p(HD_STATUS);
+	(void) hd_inb(HD_STATUS);
 #if (HD_DELAY > 0)
 	last_req = read_timer();
 #endif
@@ -446,17 +488,19 @@ static void write_intr(void)
 {
 	int i;
 	int retries = 100000;
+	unsigned char b;
+
 
 	do {
-		i = (unsigned) inb_p(HD_STATUS);
-		if (i & BUSY_STAT)
+		b = hd_inb(HD_STATUS);
+		if (b & BUSY_STAT)
 			continue;
-		if (!OK_STATUS(i))
+		if (!OK_STATUS(b))
 			break;
-		if ((CURRENT->nr_sectors <= 1) || (i & DRQ_STAT))
+		if ((CURRENT->nr_sectors <= 1) || (b & DRQ_STAT))
 			goto ok_to_write;
 	} while (--retries > 0);
-	dump_status("write_intr", i);
+	dump_status("write_intr", b);
 	bad_rw_intr();
 	hd_request();
 	return;
@@ -745,9 +789,12 @@ static void __init hd_geninit(void)
 		extern struct drive_info drive_info;
 		unsigned char *BIOS = (unsigned char *) &drive_info;
 		unsigned long flags;
+#ifndef CONFIG_PC9800
 		int cmos_disks;
+#endif
 
 		for (drive=0 ; drive<2 ; drive++) {
+#ifndef CONFIG_PC9800
 			hd_info[drive].cyl = *(unsigned short *) BIOS;
 			hd_info[drive].head = *(2+BIOS);
 			hd_info[drive].wpcom = *(unsigned short *) (5+BIOS);
@@ -759,8 +806,20 @@ static void __init hd_geninit(void)
 				NR_HD++;
 #endif
 			BIOS += 16;
+#else
+			hd_info[drive].cyl = *(unsigned short *) BIOS;
+			hd_info[drive].head = *(3+BIOS);
+			hd_info[drive].sect = *(2+BIOS);
+			hd_info[drive].wpcom = 0;
+			hd_info[drive].ctl = *(3+BIOS) > 8 ? 8 : 0;
+			hd_info[drive].lzone = *(unsigned short *) BIOS;
+			if (hd_info[drive].cyl && NR_HD == drive)
+				NR_HD++;
+			BIOS += 6;
+#endif
 		}
 
+#ifndef CONFIG_PC9800
 	/*
 		We query CMOS about hard disks : it could be that 
 		we have a SCSI/ESDI/etc controller that is BIOS
@@ -794,6 +853,7 @@ static void __init hd_geninit(void)
 			else
 				NR_HD = 1;
 		}
+#endif
 	}
 #endif /* __i386__ */
 #ifdef __arm__
@@ -823,8 +883,14 @@ static void __init hd_geninit(void)
 		NR_HD = 0;
 		return;
 	}
+#ifndef CONFIG_PC9800
 	request_region(HD_DATA, 8, "hd");
 	request_region(HD_CMD, 1, "hd(cmd)");
+#else
+	request_region (HD_DATA, 3, "hd (data)");
+	request_region (HD_DATA + 4, -11, "hd");
+	request_region (HD_CMD, -3, "hd(cmd)");
+#endif
 
 	hd_gendisk.nr_real = NR_HD;
 

@@ -460,6 +460,9 @@ static u8 apm_bios_call(u32 func, u32 ebx_in, u32 ecx_in,
 	__asm__ __volatile__(APM_DO_ZERO_SEGS
 		"pushl %%edi\n\t"
 		"pushl %%ebp\n\t"
+#ifdef CONFIG_PC9800
+		"pushfl\n\t"
+#endif
 		"lcall %%cs:" SYMBOL_NAME_STR(apm_bios_entry) "\n\t"
 		"setc %%al\n\t"
 		"popl %%ebp\n\t"
@@ -497,6 +500,9 @@ static u8 apm_bios_call_simple(u32 func, u32 ebx_in, u32 ecx_in, u32 *eax)
 		__asm__ __volatile__(APM_DO_ZERO_SEGS
 			"pushl %%edi\n\t"
 			"pushl %%ebp\n\t"
+#ifdef CONFIG_PC9800
+			"pushfl\n\t"
+#endif
 			"lcall %%cs:" SYMBOL_NAME_STR(apm_bios_entry) "\n\t"
 			"setc %%bl\n\t"
 			"popl %%ebp\n\t"
@@ -1405,7 +1411,12 @@ static int apm_get_info(char *buf, char **start, off_t fpos, int length)
 	      -1: Unknown
 	   8) min = minutes; sec = seconds */
 
-	p += sprintf(p, "%s %d.%d 0x%02x 0x%02x 0x%02x 0x%02x %d%% %d %s\n",
+	p += sprintf(p,
+#ifndef CONFIG_PC9800
+		     "%s %d.%d 0x%02x 0x%02x 0x%02x 0x%02x %d%% %d %s\n",
+#else
+		     "%s %d.%02x 0x%02x 0x%02x 0x%02x 0x%02x %d%% %d %s\n",
+#endif
 		     driver_version,
 		     (apm_info.bios.version >> 8) & 0xff,
 		     apm_info.bios.version & 0xff,
@@ -1610,7 +1621,11 @@ static int __init apm_init(void)
 		return -ENODEV;
 	}
 	printk(KERN_INFO
+#ifndef CONFIG_PC9800
 		"apm: BIOS version %d.%d Flags 0x%02x (Driver version %s)\n",
+#else
+		"apm: BIOS version %d.%02x Flags 0x%02x (Driver version %s)\n",
+#endif
 		((apm_info.bios.version >> 8) & 0xff),
 		(apm_info.bios.version & 0xff),
 		apm_info.bios.flags,

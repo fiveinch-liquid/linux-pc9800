@@ -16,6 +16,11 @@ bool 'Prompt for development and/or incomplete code/drivers' CONFIG_EXPERIMENTAL
 endmenu
 
 mainmenu_option next_comment
+comment 'Platform dependent setup'
+bool 'NEC PC-9800 support' CONFIG_PC9800
+endmenu
+
+mainmenu_option next_comment
 comment 'Loadable module support'
 bool 'Enable loadable module support' CONFIG_MODULES
 if [ "$CONFIG_MODULES" = "y" ]; then
@@ -186,7 +191,9 @@ mainmenu_option next_comment
 comment 'General setup'
 
 bool 'Networking support' CONFIG_NET
+if [ "$CONFIG_PC9800" != "y" ]; then
 bool 'SGI Visual Workstation support' CONFIG_VISWS
+fi
 if [ "$CONFIG_VISWS" = "y" ]; then
    define_bool CONFIG_X86_VISWS_APIC y
    define_bool CONFIG_X86_LOCAL_APIC y
@@ -213,9 +220,13 @@ fi
 
 source drivers/pci/Config.in
 
-bool 'EISA support' CONFIG_EISA
+if [ "$CONFIG_PC9800" != "y" ]; then
+   bool 'EISA support' CONFIG_EISA
+else
+   define_bool CONFIG_EISA n
+fi
 
-if [ "$CONFIG_VISWS" != "y" ]; then
+if [ "$CONFIG_PC9800" != "y" -a "$CONFIG_VISWS" != "y" ]; then
    bool 'MCA support' CONFIG_MCA
 else
    define_bool CONFIG_MCA n
@@ -361,12 +372,20 @@ source fs/Config.in
 if [ "$CONFIG_VT" = "y" ]; then
    mainmenu_option next_comment
    comment 'Console drivers'
+  if [ "$CONFIG_PC9800" = "y" ]; then
+      bool 'PC-9800 GDC text console' CONFIG_GDC_CONSOLE
+      dep_bool '   Enable 32-bit access to text video RAM' CONFIG_GDC_32BITACCESS $CONFIG_GDC_CONSOLE
+      if [ "$CONFIG_EXPERIMENTAL" = "y" ]; then
+         source drivers/video/Config.in
+      fi
+  else
    bool 'VGA text console' CONFIG_VGA_CONSOLE
    bool 'Video mode selection support' CONFIG_VIDEO_SELECT
    if [ "$CONFIG_EXPERIMENTAL" = "y" ]; then
       tristate 'MDA text console (dual-headed) (EXPERIMENTAL)' CONFIG_MDA_CONSOLE
       source drivers/video/Config.in
    fi
+  fi
    endmenu
 fi
 
@@ -390,4 +409,7 @@ comment 'Kernel hacking'
 
 #bool 'Debug kmalloc/kfree' CONFIG_DEBUG_MALLOC
 bool 'Magic SysRq key' CONFIG_MAGIC_SYSRQ
+if [ "$CONFIG_PC9800" = "y" ]; then
+  bool 'Save kernel messages into UCG-RAM' CONFIG_PC9800_UCGLOG
+fi
 endmenu

@@ -113,6 +113,13 @@
  */
 
 /*
+ * 1999/01/19 -- N.Fujita & Linux/98 Project -- Added code for NEC PC-9800
+ * series.
+ */
+
+#include <linux/config.h>
+
+/*
  * 1999/08/13 -- Paul Slootman -- floppy stopped working on Alpha after 24
  * days, 6 hours, 32 minutes and 32 seconds (i.e. MAXINT jiffies; ints were
  * being used to store jiffies, which are unsigned longs).
@@ -127,6 +134,10 @@
 #define FLOPPY_SANITY_CHECK
 #undef  FLOPPY_SILENT_DCL_CLEAR
 
+#ifdef CONFIG_PC9800
+#define PC9800_DEBUG_FLOPPY
+#endif
+
 #define REALLY_SLOW_IO
 
 #define DEBUGT 2
@@ -135,6 +146,17 @@
 /* do print messages for unexpected interrupts */
 static int print_unex=1;
 #include <linux/module.h>
+#ifndef CONFIG_PC9800
+#else /* CONFIG_PC9800 */
+static int auto_detect_mode = 0;
+static int retry_auto_detect = 0;
+#if 0
+#define FD_AFTER_RESET_DELAY 1000000
+#else
+#define FD_AFTER_RESET_DELAY 10000
+#endif
+#endif /* !CONFIG_PC9800 */
+
 #include <linux/sched.h>
 #include <linux/fs.h>
 #include <linux/kernel.h>
@@ -176,8 +198,19 @@ static int slow_floppy;
 #include <asm/io.h>
 #include <asm/uaccess.h>
 
-static int FLOPPY_IRQ=6;
-static int FLOPPY_DMA=2;
+#ifdef CONFIG_PC9800
+# define DEFAULT_FLOPPY_IRQ	11
+#endif
+
+#ifndef DEFAULT_FLOPPY_IRQ
+# define DEFAULT_FLOPPY_IRQ	6
+#endif
+#ifndef DEFAULT_FLOPPY_DMA
+# define DEFAULT_FLOPPY_DMA	2
+#endif
+
+static int FLOPPY_IRQ=DEFAULT_FLOPPY_IRQ;
+static int FLOPPY_DMA=DEFAULT_FLOPPY_DMA;
 static int can_use_virtual_dma=2;
 /* =======
  * can use virtual DMA:
@@ -201,7 +234,11 @@ static int use_virtual_dma;
 
 static unsigned short virtual_dma_port=0x3f0;
 void floppy_interrupt(int irq, void *dev_id, struct pt_regs * regs);
+#ifndef CONFIG_PC9800
 static int set_dor(int fdc, char mask, char data);
+#else
+static int set_mode(char mask, char data);
+#endif
 static void register_devfs_entries (int drive) __init;
 static devfs_handle_t devfs_handle;
 
@@ -217,7 +254,11 @@ static devfs_handle_t devfs_handle;
  *       some ports reference this variable from there. -DaveM
  */
 
+#ifndef CONFIG_PC9800
 static int allowed_drive_mask = 0x33;
+#else
+static int allowed_drive_mask = 0x0f;
+#endif
 
 #include <asm/floppy.h>
 
@@ -369,6 +410,7 @@ static struct {
 {{1,  300, 16, 16, 8000,    1*HZ, 3*HZ,  0, SEL_DLY, 5,  40, 3*HZ, 17, {3,1,2,0,2}, 0,
       0, { 1, 0, 0, 0, 0, 0, 0, 0}, 3*HZ/2, 1 }, "360K PC" }, /*5 1/4 360 KB PC*/
 
+#ifndef CONFIG_PC9800
 {{2,  500, 16, 16, 6000, 4*HZ/10, 3*HZ, 14, SEL_DLY, 6,  83, 3*HZ, 17, {3,1,2,0,2}, 0,
       0, { 2, 5, 6,23,10,20,12, 0}, 3*HZ/2, 2 }, "1.2M" }, /*5 1/4 HD AT*/
 
@@ -377,6 +419,16 @@ static struct {
 
 {{4,  500, 16, 16, 4000, 4*HZ/10, 3*HZ, 10, SEL_DLY, 5,  83, 3*HZ, 20, {3,1,2,0,2}, 0,
       0, { 7, 4,25,22,31,21,29,11}, 3*HZ/2, 7 }, "1.44M" }, /*3 1/2 HD*/
+#else /* CONFIG_PC9800 */
+{{2,  500, 16, 16, 6000, 4*HZ/10, 3*HZ, 14, SEL_DLY, 6,  83, 3*HZ, 17, {3,1,2,0,2}, 0,
+      0, { 2, 6, 4, 0, 0, 0, 0, 0}, 3*HZ/2, 2 }, "1.2M" }, /*5 1/4 HD AT*/
+
+{{3,  250, 16, 16, 3000,    1*HZ, 3*HZ,  0, SEL_DLY, 5,  83, 3*HZ, 20, {3,1,2,0,2}, 0,
+      0, { 4, 6, 0, 0, 0, 0, 0, 0}, 3*HZ/2, 4 }, "720k" }, /*3 1/2 DD*/
+
+{{4,  500, 16, 16, 4000, 4*HZ/10, 3*HZ, 10, SEL_DLY, 5,  83, 3*HZ, 20, {3,1,2,0,2}, 0,
+      0, { 7,10, 2, 4, 6, 0, 0, 0}, 3*HZ/2, 7 }, "1.44M" }, /*3 1/2 HD*/
+#endif /* !CONFIG_PC9800 */
 
 {{5, 1000, 15,  8, 3000, 4*HZ/10, 3*HZ, 10, SEL_DLY, 5,  83, 3*HZ, 40, {3,1,2,0,2}, 0,
       0, { 7, 8, 4,25,28,22,31,21}, 3*HZ/2, 8 }, "2.88M AMI BIOS" }, /*3 1/2 ED*/
@@ -420,7 +472,11 @@ static struct floppy_raw_cmd *raw_cmd, default_raw_cmd;
 	     |  | |  | |    |    |    |    /fmt gap (gap2) */
 static struct floppy_struct floppy_type[32] = {
 	{    0, 0,0, 0,0,0x00,0x00,0x00,0x00,NULL    },	/*  0 no testing    */
+#ifndef CONFIG_PC9800
 	{  720, 9,2,40,0,0x2A,0x02,0xDF,0x50,"d360"  }, /*  1 360KB PC      */
+#else
+	{ 2464,16,2,77,0,0x35,0x48,0xDF,0x74,"d360"  }, /*  1 1.25MB 98     */
+#endif
 	{ 2400,15,2,80,0,0x1B,0x00,0xDF,0x54,"h1200" },	/*  2 1.2MB AT      */
 	{  720, 9,1,80,0,0x2A,0x02,0xDF,0x50,"D360"  },	/*  3 360KB SS 3.5" */
 	{ 1440, 9,2,80,0,0x2A,0x02,0xDF,0x50,"D720"  },	/*  4 720KB 3.5"    */
@@ -709,6 +765,7 @@ static int minimum(int a, int b)
  *  The floppy has been changed after the last seek.
  */
 
+#ifndef CONFIG_PC9800
 static int disk_change(int drive)
 {
 	int fdc=FDC(drive);
@@ -759,7 +816,33 @@ static int disk_change(int drive)
 	}
 	return 0;
 }
+#else /* CONFIG_PC9800 */
+static int disk_change(int drive)
+{
+	return UTESTF(FD_DISK_CHANGED);
+}
+#endif /* !CONFIG_PC9800 */
 
+#ifdef CONFIG_PC9800
+static int set_mode(char mask, char data)
+{
+	register unsigned char newdor,olddor;
+
+	olddor = FDCS->dor;
+	newdor =  (olddor & mask) | data;
+	if (newdor != olddor){
+		FDCS->dor = newdor;
+		fd_outb(newdor, FD_MODE);
+	}
+	if (newdor & FLOPPY_MOTOR_MASK)
+		floppy_grab_irq_and_dma();
+	if (olddor & FLOPPY_MOTOR_MASK)
+		floppy_release_irq_and_dma();
+	return olddor;
+}
+#endif /* CONFIG_PC9800 */
+
+#ifndef CONFIG_PC9800
 static inline int is_selected(int dor, int unit)
 {
 	return ((dor  & (0x10 << unit)) && (dor &3) == unit);
@@ -805,13 +888,19 @@ static int set_dor(int fdc, char mask, char data)
 		floppy_release_irq_and_dma();
 	return olddor;
 }
+#endif /* !CONFIG_PC9800 */
 
 static void twaddle(void)
 {
 	if (DP->select_delay)
 		return;
+#ifndef CONFIG_PC9800
 	fd_outb(FDCS->dor & ~(0x10<<UNIT(current_drive)), FD_DOR);
 	fd_outb(FDCS->dor, FD_DOR);
+#else /* CONFIG_PC9800 */
+	fd_outb(FDCS->dor & 0xf7, FD_MODE);
+	fd_outb(FDCS->dor, FD_MODE);
+#endif /* !CONFIG_PC9800 */
 	DRS->select_date = jiffies;
 }
 
@@ -832,6 +921,7 @@ static void reset_fdc_info(int mode)
 }
 
 /* selects the fdc and drive, and enables the fdc's input/dma. */
+#ifndef CONFIG_PC9800
 static void set_fdc(int drive)
 {
 	if (drive >= 0 && drive < N_DRIVE){
@@ -851,6 +941,18 @@ static void set_fdc(int drive)
 	if (fd_inb(FD_STATUS) != STATUS_READY)
 		FDCS->reset = 1;
 }
+#else /* CONFIG_PC9800 */
+static void set_fdc(int drive)
+{
+	fdc = 0;
+	current_drive = drive;
+	set_mode(~0,0x10);
+	if (FDCS->rawcmd == 2)
+		reset_fdc_info(1);
+	if (fd_inb(FD_STATUS) != STATUS_READY)
+		FDCS->reset = 1;
+}
+#endif /* !CONFIG_PC9800 */
 
 /* locks the driver */
 static int _lock_fdc(int drive, int interruptible, int line)
@@ -914,12 +1016,19 @@ static inline void unlock_fdc(void)
 	wake_up(&fdc_wait);
 }
 
+#ifndef CONFIG_PC9800
+
 /* switches the motor off after a given timeout */
 static void motor_off_callback(unsigned long nr)
 {
+#ifndef CONFIG_PC9800
 	unsigned char mask = ~(0x10 << UNIT(nr));
 
 	set_dor(FDC(nr), mask, 0);
+#else /* CONFIG_PC9800 */
+	printk (KERN_DEBUG "fdc%u: turn off motor\n", nr);
+	
+#endif /* CONFIG_PC9800 */
 }
 
 static struct timer_list motor_off_timer[N_DRIVE] = {
@@ -936,6 +1045,7 @@ static struct timer_list motor_off_timer[N_DRIVE] = {
 /* schedules motor off */
 static void floppy_off(unsigned int drive)
 {
+#ifndef CONFIG_PC9800
 	unsigned long volatile delta;
 	register int fdc=FDC(drive);
 
@@ -953,7 +1063,58 @@ static void floppy_off(unsigned int drive)
 		motor_off_timer[drive].expires = jiffies + UDP->spindown - delta;
 	}
 	add_timer(motor_off_timer+drive);
+#endif /* !CONFIG_PC9800 */
 }
+
+#else /* CONFIG_PC9800 */
+
+/* switches the motor off after a given timeout */
+static void motor_off_callback(unsigned long fdc)
+{
+	printk (KERN_DEBUG "fdc%u: turn off motor\n", (unsigned int) fdc);
+
+	fd_outb (0, FD_MODE);	/* MTON = 0 */
+}
+
+static struct timer_list motor_off_timer[N_FDC] = {
+	{ data: 0, function: motor_off_callback },
+#if N_FDC > 1
+	{ data: 1, function: motor_off_callback },
+#endif
+#if N_FDC > 2
+# error "N_FDC > 2; please fix initializer for motor_off_timer[]"
+#endif
+};
+
+/* schedules motor off */
+static void floppy_off(unsigned int drive)
+{
+	unsigned long volatile delta;
+	register int fdc = FDC (drive);
+
+	if (!(FDCS->dor & (0x10 << UNIT(drive))))
+		return;
+
+	del_timer (motor_off_timer + fdc);
+
+#if 0
+	/* make spindle stop in a position which minimizes spinup time
+	 * next time */
+	if (UDP->rps){
+		delta = jiffies - UDRS->first_read_date + HZ -
+			UDP->spindown_offset;
+		delta = ((delta * UDP->rps) % HZ) / UDP->rps;
+		motor_off_timer[drive].expires = jiffies + UDP->spindown - delta;
+	}
+#else
+	if (UDP->rps)
+		motor_off_timer[drive].expires = jiffies + UDP->spindown;
+#endif
+
+	add_timer (motor_off_timer + fdc);
+}
+
+#endif /* CONFIG_PC9800 */
 
 /*
  * cycle through all N_DRIVE floppy drives, for disk change testing.
@@ -973,11 +1134,13 @@ static void scandrives(void)
 		if (UDRS->fd_ref == 0 || UDP->select_delay != 0)
 			continue; /* skip closed drives */
 		set_fdc(drive);
+#ifndef CONFIG_PC9800
 		if (!(set_dor(fdc, ~3, UNIT(drive) | (0x10 << UNIT(drive))) &
 		      (0x10 << UNIT(drive))))
 			/* switch the motor off again, if it was off to
 			 * begin with */
 			set_dor(fdc, ~(0x10 << UNIT(drive)), 0);
+#endif /* !CONFIG_PC9800 */
 	}
 	set_fdc(saved_drive);
 }
@@ -1137,12 +1300,23 @@ static void setup_DMA(void)
 static void show_floppy(void);
 
 /* waits until the fdc becomes ready */
+
+#ifndef CONFIG_PC9800
+#define READY_DELAY 10000
+#else /* CONFIG_PC9800 */
+#ifdef PC9800_DEBUG_FLOPPY
+#define READY_DELAY 10000000
+#else
+#define READY_DELAY 100000
+#endif
+#endif /* !CONFIG_PC9800 */
+
 static int wait_til_ready(void)
 {
 	int counter, status;
 	if (FDCS->reset)
 		return -1;
-	for (counter = 0; counter < 10000; counter++) {
+	for (counter = 0; counter < READY_DELAY; counter++) {
 		status = fd_inb(FD_STATUS);		
 		if (status & STATUS_READY)
 			return status;
@@ -1213,6 +1387,8 @@ static int result(void)
 	return -1;
 }
 
+#ifndef CONFIG_PC9800
+
 #define MORE_OUTPUT -2
 /* does the fdc need more output? */
 static int need_more_output(void)
@@ -1262,8 +1438,12 @@ static inline void perpendicular_mode(void)
 	}
 } /* perpendicular_mode */
 
+#endif /* !CONFIG_PC9800 */
+
 static int fifo_depth = 0xa;
 static int no_fifo;
+
+#ifndef CONFIG_PC9800
 
 static int fdc_configure(void)
 {
@@ -1277,6 +1457,8 @@ static int fdc_configure(void)
 			   0 upwards */
 	return 1;
 }	
+
+#endif /* !CONFIG_PC9800 */
 
 #define NOMINAL_DTR 500
 
@@ -1299,6 +1481,7 @@ static int fdc_configure(void)
  *
  * These values are rounded up to the next highest available delay time.
  */
+#ifndef CONFIG_PC9800
 static void fdc_specify(void)
 {
 	unsigned char spec1, spec2;
@@ -1372,7 +1555,16 @@ static void fdc_specify(void)
 		output_byte(FDCS->spec2 = spec2);
 	}
 } /* fdc_specify */
+#else /* CONFIG_PC9800 */
+static void fdc_specify(void)
+{
+	output_byte(FD_SPECIFY);
+	output_byte(FDCS->spec1 = 0xDF);
+	output_byte(FDCS->spec2 = 0x24);
+}
+#endif /* !CONFIG_PC9800 */
 
+#ifndef CONFIG_PC9800
 /* Set the FDC's data transfer rate on behalf of the specified drive.
  * NOTE: with 82072/82077 FDCs, changing the data rate requires a reissue
  * of the specify command (i.e. using the fdc_specify function).
@@ -1395,6 +1587,7 @@ static int fdc_dtr(void)
 	return(wait_for_completion(jiffies+2UL*HZ/100,
 				   (timeout_fn) floppy_ready));
 } /* fdc_dtr */
+#endif /* !CONFIG_PC9800 */
 
 static void tell_sector(void)
 {
@@ -1402,6 +1595,37 @@ static void tell_sector(void)
 	       R_TRACK, R_HEAD, R_SECTOR, R_SIZECODE);
 } /* tell_sector */
 
+
+#ifdef CONFIG_PC9800
+static int auto_detect_mode_pc9800(void)
+{
+#ifdef PC9800_DEBUG_FLOPPY
+	printk("auto_detect_mode_pc9800 : retry_auto_detect = %d\n",retry_auto_detect);
+#endif
+	if(retry_auto_detect>4){
+		retry_auto_detect = 0;	   
+		return 1;
+	}
+	switch((int)(_floppy - floppy_type)){
+		case 2:
+			_floppy = floppy_type + 4;
+			break;
+		case 4:
+		case 6:
+			_floppy = floppy_type + 7;
+			break;
+		case 7:
+		case 10:
+			_floppy = floppy_type + 2;
+			break;
+		default:
+			_floppy = floppy_type + 7;
+	}
+	retry_auto_detect++;
+	return 0;
+}
+static void access_mode_change_pc9800(void);
+#endif /* CONFIG_PC9800 */
 
 /*
  * OK, this error interpreting routine is called after a
@@ -1438,7 +1662,9 @@ static int interpret_errors(void)
 					DPRINT("Over/Underrun - retrying\n");
 				bad = 0;
 			}else if (*errors >= DP->max_errors.reporting){
+#ifndef CONFIG_PC9800
 				DPRINT("");
+#endif
 				if (ST0 & ST0_ECE) {
 					printk("Recalibrate failed!");
 				} else if (ST2 & ST2_CRC) {
@@ -1448,11 +1674,27 @@ static int interpret_errors(void)
 					printk("CRC error");
 					tell_sector();
 				} else if ((ST1 & (ST1_MAM|ST1_ND)) || (ST2 & ST2_MAM)) {
+#ifndef CONFIG_PC9800
 					if (!probing) {
 						printk("sector not found");
 						tell_sector();
 					} else
 						printk("probe failed...");
+#else /* CONFIG_PC9800 */
+					if(auto_detect_mode){
+						bad=(char)auto_detect_mode_pc9800();
+						access_mode_change_pc9800();
+					}
+					if(bad){
+						printk("floppy error : MA : _floppy - floppy_type = %d\n",(int)(_floppy - floppy_type));
+						printk("bad = %d\n",(int)bad);
+					if (!probing) {
+						printk("sector not found");
+						tell_sector();
+					} else
+						printk("probe failed...");
+					}
+#endif /* !CONFIG_PC9800 */
 				} else if (ST2 & ST2_WC) {	/* seek error */
 					printk("wrong cylinder");
 				} else if (ST2 & ST2_BC) {	/* cylinder marked as bad */
@@ -1473,10 +1715,17 @@ static int interpret_errors(void)
 			cont->done(0);
 			return 2;
 		case 0xc0:
+#ifdef CONFIG_PC9800
+			SETF(FD_DISK_CHANGED);
+			SETF(FD_DISK_WRITABLE);
+#endif
 			DPRINT("Abnormal termination caused by polling\n");
 			cont->error();
 			return 2;
 		default: /* (0) Normal command termination */
+#ifdef CONFIG_PC9800
+			auto_detect_mode = 0;
+#endif
 			return 0;
 	}
 }
@@ -1492,6 +1741,9 @@ static void setup_rw_floppy(void)
 	unsigned long ready_date;
 	timeout_fn function;
 
+#ifdef CONFIG_PC9800
+	access_mode_change_pc9800();
+#endif /* CONFIG_PC9800 */
 	flags = raw_cmd->flags;
 	if (flags & (FD_RAW_READ | FD_RAW_WRITE))
 		flags |= FD_RAW_INTR;
@@ -1552,7 +1804,9 @@ static void seek_interrupt(void)
 	debugt("seek interrupt:");
 #endif
 	if (inr != 2 || (ST0 & 0xF8) != 0x20) {
+#ifndef CONFIG_PC9800
 		DPRINT("seek failed\n");
+#endif
 		DRS->track = NEED_2_RECAL;
 		cont->error();
 		cont->redo();
@@ -1566,6 +1820,9 @@ static void seek_interrupt(void)
 		}
 #endif
 		CLEARF(FD_DISK_NEWCHANGE); /* effective seek */
+#ifdef CONFIG_PC9800
+		CLEARF(FD_DISK_CHANGED); /* effective seek */
+#endif
 		DRS->select_date = jiffies;
 	}
 	DRS->track = ST1;
@@ -1633,7 +1890,9 @@ static void seek_floppy(void)
 			track = raw_cmd->track - 1;
 		else {
 			if (DP->flags & FD_SILENT_DCL_CLEAR){
+#ifndef CONFIG_PC9800
 				set_dor(fdc, ~(0x10 << UNIT(current_drive)), 0);
+#endif
 				blind_seek = 1;
 				raw_cmd->flags |= FD_RAW_NEED_SEEK;
 			}
@@ -1762,12 +2021,21 @@ void floppy_interrupt(int irq, void *dev_id, struct pt_regs * regs)
 	 * activity.
 	 */
 
+#ifndef CONFIG_PC9800
 	do_print = !handler && print_unex && !initialising;
+#else
+	do_print = !handler && !initialising;
+#endif
 
 	inr = result();
+#ifndef CONFIG_PC9800
 	if (do_print)
+#else
+	if (inr && do_print)
+#endif
 		print_result("unexpected interrupt", inr);
 	if (inr == 0){
+#ifndef CONFIG_PC9800
 		int max_sensei = 4;
 		do {
 			output_byte(FD_SENSEI);
@@ -1776,11 +2044,49 @@ void floppy_interrupt(int irq, void *dev_id, struct pt_regs * regs)
 				print_result("sensei", inr);
 			max_sensei--;
 		} while ((ST0 & 0x83) != UNIT(current_drive) && inr == 2 && max_sensei);
+#else /* CONFIG_PC9800 */
+		do {
+			output_byte(FD_SENSEI);
+			inr = result();
+			if ((ST0 & ST0_INTR) == 0xC0) {
+				int drive = ST0 & ST0_DS;
+
+				/* Attention Interrupt. */
+				if (ST0 & ST0_NR) {
+#ifdef PC9800_DEBUG_FLOPPY
+					if (do_print)
+						printk (KERN_DEBUG
+							"floppy debug: floppy ejected (drive %d)\n",
+							drive);
+#endif
+				}
+				else {
+#ifdef PC9800_DEBUG_FLOPPY
+					if (do_print)
+						printk (KERN_DEBUG
+							"floppy debug: floppy inserted (drive %d)\n",
+							drive);
+#endif
+					USETF (FD_DISK_CHANGED);
+					USETF (FD_DISK_WRITABLE);
+				}
+			} /* Attention Interrupt */
+			else {
+#ifdef PC9800_DEBUG_FLOPPY
+				printk("floppy debug : unknown interrupt\n");
+#endif
+				FDCS->reset = 1;
+			}
+		} while ((ST0 & 0x83) != UNIT(current_drive) && inr == 2);
+#endif /* !CONFIG_PC9800 */
 	}
 	if (handler) {
 		schedule_bh( (void *)(void *) handler);
-	} else
+	} else {
+#ifndef CONFIG_PC9800
 		FDCS->reset = 1;
+#endif
+	}
 	is_alive("normal interrupt end");
 }
 
@@ -1799,6 +2105,9 @@ static void recalibrate_floppy(void)
  */
 static void reset_interrupt(void)
 {
+#ifdef PC9800_DEBUG_FLOPPY
+	printk("floppy debug : reset interrupt\n");
+#endif
 #ifdef DEBUGT
 	debugt("reset interrupt:");
 #endif
@@ -1818,6 +2127,10 @@ static void reset_fdc(void)
 {
 	unsigned long flags;
 	
+#ifdef PC9800_DEBUG_FLOPPY
+	printk("floppy debug : reset_fdc\n");
+#endif
+
 	SET_INTR(reset_interrupt);
 	FDCS->reset = 0;
 	reset_fdc_info(0);
@@ -1829,6 +2142,7 @@ static void reset_fdc(void)
 	fd_disable_dma();
 	release_dma_lock(flags);
 
+#ifndef CONFIG_PC9800
 	if (FDCS->version >= FDC_82072A)
 		fd_outb(0x80 | (FDCS->dtr &3), FD_STATUS);
 	else {
@@ -1836,6 +2150,12 @@ static void reset_fdc(void)
 		udelay(FD_RESET_DELAY);
 		fd_outb(FDCS->dor, FD_DOR);
 	}
+#else /* CONFIG_PC9800 */
+	fd_outb(FDCS->dor | 0x80, FD_MODE);
+	udelay(FD_RESET_DELAY);
+	fd_outb(FDCS->dor, FD_MODE);
+	udelay(FD_AFTER_RESET_DELAY);
+#endif /* !CONFIG_PC9800 */
 }
 
 static void show_floppy(void)
@@ -1914,9 +2234,141 @@ static void floppy_shutdown(void)
 }
 /*typedef void (*timeout_fn)(unsigned long);*/
 
+#ifdef CONFIG_PC9800
+#undef PC9800_DEBUG_FLOPPY /* it's too noisy :-) */
+static void access_mode_change_pc9800(void)
+{
+	static int access_mode,mode_change_now,old_mode,new_set=1;
+#ifdef PC9800_DEBUG_FLOPPY
+	printk("enter access_mode_change\n");
+#endif
+	access_mode = mode_change_now = 0;
+	if(DP->cmos==4){
+		switch((int)(_floppy - &floppy_type[0])){
+		case 1:
+		case 2:
+			new_set = 1;
+			access_mode = 2;
+			break;
+		case 4:
+		case 6:
+			new_set = 1;
+			access_mode = 3;
+			break;
+		case 7:
+		case 10:
+			new_set = 1;
+			access_mode = 1;
+			break;
+		default:
+			access_mode=1;
+			break;
+		}
+
+		old_mode = fd_inb(FD_MODE_CHANGE) & 3;
+
+		switch(access_mode){
+		case 1:
+			if((old_mode & 2) == 0){
+				fd_outb(old_mode | 2, FD_MODE_CHANGE);
+				mode_change_now = 1;
+			}
+			else{
+				fd_outb(current_drive << 5,FD_EMODE_CHANGE);
+				if(fd_inb(FD_EMODE_CHANGE) == 0xff)
+					return;
+			}
+			fd_outb((current_drive << 5) | 0x11,FD_EMODE_CHANGE);
+			mode_change_now = 1;
+			break;
+		case 2:
+			if((old_mode & 2) == 0){
+				fd_outb(old_mode | 2, FD_MODE_CHANGE);
+				mode_change_now = 1;
+			}
+			else{
+				fd_outb(current_drive << 5,FD_EMODE_CHANGE);
+				if((fd_inb(FD_EMODE_CHANGE) & 1) == 0)
+					return;
+				fd_outb((current_drive << 5) | 0x10,FD_EMODE_CHANGE);
+				mode_change_now = 1;
+			}
+			break;
+		case 3:
+			if((old_mode & 2) == 0)
+				return;
+			fd_outb(current_drive << 5,FD_EMODE_CHANGE);
+			if(fd_inb(FD_EMODE_CHANGE) & 1)
+				fd_outb((current_drive << 5) | 0x10,FD_EMODE_CHANGE);
+			fd_outb(old_mode & 0xfd, FD_MODE_CHANGE);
+			mode_change_now = 1;
+			break;
+		default:
+			break;
+		}
+	}
+	else {
+		switch((int)(_floppy - &floppy_type[0])){
+		case 1:
+		case 2:
+			new_set = 1;
+			access_mode = 2;
+			break;
+		case 4:
+		case 6:
+			new_set = 1;
+			access_mode = 3;
+			break;
+		default:
+			switch(DP->cmos){
+			case 2:
+				access_mode = 2;
+				break;
+			case 3:
+				access_mode = 3;
+				break;
+			default:
+				break;
+			}
+			break;
+		}
+
+		old_mode = fd_inb(FD_MODE_CHANGE) & 3;
+
+		switch(access_mode){
+		case 2:
+			if((old_mode & 2) == 0){
+				fd_outb(old_mode | 2, FD_MODE_CHANGE);
+				mode_change_now = 1;
+			}
+			break;
+		case 3:
+			if(old_mode & 2){
+				fd_outb(old_mode & 0xfd, FD_MODE_CHANGE);
+				mode_change_now = 1;
+			}
+			break;
+		default:
+			break;
+		}
+	}
+#ifdef PC9800_DEBUG_FLOPPY
+	printk("floppy debug : DP->cmos = %d\n",DP->cmos);
+	printk("floppy debug : mode_change_now = %d\n",mode_change_now);
+	printk("floppy debug : access_mode = %d\n",access_mode);
+	printk("floppy debug : old_mode = %d\n",old_mode);
+	printk("floppy debug : _floppy - &floppy_type[0] = %d\n",(int)(_floppy - &floppy_type[0]));
+#endif /* PC9800_DEBUG_FLOPPY */
+	if(mode_change_now)
+		reset_fdc();
+}
+#define PC9800_DEBUG_FLOPPY /* become noisy again... */
+#endif /* CONFIG_PC9800 */
+
 /* start motor, check media-changed condition and write protection */
 static int start_motor(void (*function)(void) )
 {
+#ifndef CONFIG_PC9800
 	int mask, data;
 
 	mask = 0xfc;
@@ -1937,6 +2389,10 @@ static int start_motor(void (*function)(void) )
 	/* starts motor and selects floppy */
 	del_timer(motor_off_timer + current_drive);
 	set_dor(fdc, mask, data);
+#else /* CONFIG_PC9800 */
+	access_mode_change_pc9800();
+	set_mode(~0,0x8);
+#endif /* !CONFIG_PC9800 */
 
 	/* wait_for_completion also schedules reset if needed. */
 	return(wait_for_completion(DRS->select_date+DP->select_delay,
@@ -1947,7 +2403,9 @@ static void floppy_ready(void)
 {
 	CHECK_RESET;
 	if (start_motor(floppy_ready)) return;
+#ifndef CONFIG_PC9800
 	if (fdc_dtr()) return;
+#endif
 
 #ifdef DCL_DEBUG
 	if (DP->flags & FD_DEBUG){
@@ -1971,8 +2429,15 @@ static void floppy_ready(void)
 	}
 #endif
 
+#if 0
+#ifdef CONFIG_PC9800
+	access_mode_change_pc9800();
+#endif
+#endif
 	if (raw_cmd->flags & (FD_RAW_NEED_SEEK | FD_RAW_NEED_DISK)){
+#ifndef CONFIG_PC9800
 		perpendicular_mode();
+#endif
 		fdc_specify(); /* must be done here because of hut, hlt ... */
 		seek_floppy();
 	} else {
@@ -2068,6 +2533,10 @@ static int wait_til_done(void (*handler)(void), int interruptible)
 		return -EINTR;
 	}
 
+#ifdef PC9800_DEBUG_FLOPPY
+	if(command_status != FD_COMMAND_OKAY)
+		printk("floppy check : wait_til_done out: %d\n",command_status);
+#endif
 	if (FDCS->reset)
 		command_status = FD_COMMAND_ERROR;
 	if (command_status == FD_COMMAND_OKAY)
@@ -2142,6 +2611,7 @@ static void bad_flp_intr(void)
 		DRS->track = NEED_2_RECAL;
 }
 
+#ifndef CONFIG_PC9800
 static void set_floppy(kdev_t device)
 {
 	if (TYPE(device))
@@ -2149,6 +2619,24 @@ static void set_floppy(kdev_t device)
 	else
 		_floppy = current_type[ DRIVE(device) ];
 }
+#else /* CONFIG_PC9800 */
+static void set_floppy(kdev_t device)
+{
+	if (TYPE(device)){
+		auto_detect_mode = 0;
+		_floppy = TYPE(device) + floppy_type;
+	} else if(auto_detect_mode==0){
+		auto_detect_mode = 1;
+		retry_auto_detect = 0;
+		_floppy = current_type[ DRIVE(device) ];
+	}
+#undef PC9800_DEBUG_FLOPPY /* this message is too noisy :-) */
+#ifdef PC9800_DEBUG_FLOPPY
+	printk("set_floppy: set floppy type = %d\n",(int)(_floppy - floppy_type));
+#endif
+#define PC9800_DEBUG_FLOPPY
+}
+#endif /* !CONFIG_PC9800 */
 
 /*
  * formatting support.
@@ -3554,6 +4042,28 @@ static int fd_ioctl(struct inode *inode, struct file *filp, unsigned int cmd,
 			LOCK_FDC(drive,1);
 			CALL(poll_drive(1, FD_RAW_NEED_DISK));
 			ret = UDRS->flags;
+#ifdef CONFIG_PC9800
+			if(ret & FD_VERIFY){
+				CALL(poll_drive(1, FD_RAW_NEED_DISK));
+				ret = UDRS->flags;
+			}
+			if(ret & FD_VERIFY){
+				CALL(poll_drive(1, FD_RAW_NEED_DISK));
+				ret = UDRS->flags;
+			}
+			if(ret & FD_VERIFY){
+				CALL(poll_drive(1, FD_RAW_NEED_DISK));
+				ret = UDRS->flags;
+			}
+			if(ret & FD_VERIFY){
+				CALL(poll_drive(1, FD_RAW_NEED_DISK));
+				ret = UDRS->flags;
+			}
+			if(ret & FD_VERIFY){
+				CALL(poll_drive(1, FD_RAW_NEED_DISK));
+				ret = UDRS->flags;
+			}
+#endif /* CONFIG_PC9800 */
 			process_fd_request();
 			if (ret & FD_VERIFY)
 				return -ENODEV;
@@ -3633,6 +4143,7 @@ static void __init config_types(void)
 	int first=1;
 	int drive;
 
+#ifndef CONFIG_PC9800
 	/* read drive info out of physical CMOS */
 	drive=0;
 	if (!UDP->cmos)
@@ -3640,6 +4151,17 @@ static void __init config_types(void)
 	drive=1;
 	if (!UDP->cmos && FLOPPY1_TYPE)
 		UDP->cmos = FLOPPY1_TYPE;
+#else /* CONFIG_PC9800 */
+	{
+		extern struct fd_info{
+			unsigned char dummy[4*6];
+			unsigned char fd_types[8];
+		} drive_info;
+
+		for(drive=0; drive<4; drive++)
+			UDP->cmos = drive_info.fd_types[drive];
+	}
+#endif /* !CONFIG_PC9800 */
 
 	/* XXX */
 	/* additional physical CMOS drive detection should go here */
@@ -3704,6 +4226,10 @@ static int floppy_open(struct inode * inode, struct file * filp)
 	int try;
 	char *tmp;
 
+#ifdef PC9800_DEBUG_FLOPPY
+	printk("floppy open: start\n");
+#endif
+
 	if (!filp) {
 		DPRINT("Weird, open called with filp=0\n");
 		return -EIO;
@@ -3712,6 +4238,19 @@ static int floppy_open(struct inode * inode, struct file * filp)
 	filp->private_data = (void*) 0;
 
 	drive = DRIVE(inode->i_rdev);
+#ifdef PC9800_DEBUG_FLOPPY
+	printk("floppy open: drive=%d, current_drive=%d, UDP->cmos=%d\n"
+		   "floppy open: FDCS={spec1=%d, spec2=%d, dtr=%d, version=%d, dor=%d, address=%lu}\n",
+		   drive,current_drive,UDP->cmos,
+		   FDCS->spec1,FDCS->spec2,FDCS->dtr,FDCS->version,FDCS->dor,FDCS->address);
+	if(_floppy){
+		printk("floppy open: _floppy={size=%d, sect=%d, head=%d, track=%d, spec1=%d}\n",
+			   _floppy->size,_floppy->sect,_floppy->head,_floppy->track,_floppy->spec1);
+	}else{
+		printk("floppy open: _floppy=NULL\n");
+	}
+#endif /* PC9800_DEBUG_FLOPPY */
+
 	if (drive >= N_DRIVE ||
 	    !(allowed_drive_mask & (1 << drive)) ||
 	    fdc_state[FDC(drive)].version == FDC_NONE)
@@ -3778,6 +4317,10 @@ static int floppy_open(struct inode * inode, struct file * filp)
 		invalidate_buffers(MKDEV(FLOPPY_MAJOR,old_dev));
 	}
 
+#ifdef PC9800_DEBUG_FLOPPY
+	printk("floppy open: floppy.c:%d passed\n",__LINE__);
+#endif
+
 	/* Allow ioctls if we have write-permissions even if read-only open.
 	 * Needed so that programs such as fdrawcmd still can work on write
 	 * protected disks */
@@ -3787,6 +4330,10 @@ static int floppy_open(struct inode * inode, struct file * filp)
 
 	if (UFDCS->rawcmd == 1)
 		UFDCS->rawcmd = 2;
+
+#ifdef PC9800_DEBUG_FLOPPY
+	printk("floppy open: floppy.c:%d passed\n",__LINE__);
+#endif
 
 	if (filp->f_flags & O_NDELAY)
 		return 0;
@@ -3798,6 +4345,10 @@ static int floppy_open(struct inode * inode, struct file * filp)
 	}
 	if ((filp->f_mode & 2) && !(UTESTF(FD_DISK_WRITABLE)))
 		RETERR(EROFS);
+#ifdef PC9800_DEBUG_FLOPPY
+	printk("floppy open: end normally\n");
+#endif
+
 	return 0;
 #undef RETERR
 }
@@ -3808,6 +4359,10 @@ static int floppy_open(struct inode * inode, struct file * filp)
 static int check_floppy_change(kdev_t dev)
 {
 	int drive = DRIVE(dev);
+
+#ifdef PC9800_DEBUG_FLOPPY
+	printk("check_floppy_change: MINOR = %d\n",MINOR(dev));
+#endif
 
 	if (MAJOR(dev) != MAJOR_NR) {
 		DPRINT("check_floppy_change: not a floppy\n");
@@ -3904,7 +4459,13 @@ static void __init register_devfs_entries (int drive)
 {
     int base_minor, i;
     static char *table[] =
-    {"", "d360", "h1200", "u360", "u720", "h360", "h720",
+    {"",
+#ifndef CONFIG_PC9800
+     "d360", 
+#else
+     "h1232",
+#endif
+     "h1200", "u360", "u720", "h360", "h720",
      "u1440", "u2880", "CompaQ", "h1440", "u1680", "h410",
      "u820", "h1476", "u1722", "h420", "u830", "h1494", "u1743",
      "h880", "u1040", "u1120", "h1600", "u1760", "u1920",
@@ -3936,6 +4497,7 @@ static void __init register_devfs_entries (int drive)
  * =============================
  */
 
+#ifndef CONFIG_PC9800
 /* Determine the floppy disk controller type */
 /* This routine was written by David C. Niemi */
 static char __init get_fdc_version(void)
@@ -4013,6 +4575,12 @@ static char __init get_fdc_version(void)
 			return FDC_82078_UNKN;
 	}
 } /* get_fdc_version */
+#else /* CONFIG_PC9800 */
+static inline char __init get_fdc_version(void)
+{
+	return FDC_8272A;
+}
+#endif /* !CONFIG_PC9800 */
 
 /* lilo configuration */
 
@@ -4073,17 +4641,21 @@ static struct param_table {
 } config_params[]={
 	{ "allowed_drive_mask", 0, &allowed_drive_mask, 0xff, 0}, /* obsolete */
 	{ "all_drives", 0, &allowed_drive_mask, 0xff, 0 }, /* obsolete */
+#ifndef CONFIG_PC9800
 	{ "asus_pci", 0, &allowed_drive_mask, 0x33, 0},
+#endif
 
-	{ "irq", 0, &FLOPPY_IRQ, 6, 0 },
-	{ "dma", 0, &FLOPPY_DMA, 2, 0 },
+	{ "irq", 0, &FLOPPY_IRQ, DEFAULT_FLOPPY_IRQ, 0 },
+	{ "dma", 0, &FLOPPY_DMA, DEFAULT_FLOPPY_DMA, 0 },
 
 	{ "daring", daring, 0, 1, 0},
 
 	{ "two_fdc",  0, &FDC2, 0x370, 0 },
 	{ "one_fdc", 0, &FDC2, 0, 0 },
 
+#ifndef CONFIG_PC9800
 	{ "thinkpad", floppy_set_flags, 0, 1, FD_INVERTED_DCL },
+#endif
 	{ "broken_dcl", floppy_set_flags, 0, 1, FD_BROKEN_DCL },
 	{ "messages", floppy_set_flags, 0, 1, FTD_MSG },
 	{ "silent_dcl_clear", floppy_set_flags, 0, 1, FD_SILENT_DCL_CLEAR },
@@ -4102,7 +4674,9 @@ static struct param_table {
 
 	{ "unexpected_interrupts", 0, &print_unex, 1, 0 },
 	{ "no_unexpected_interrupts", 0, &print_unex, 0, 0 },
+#ifndef CONFIG_PC9800
 	{ "L40SX", 0, &print_unex, 0, 0 }
+#endif
 };
 
 static int __init floppy_setup(char *str)
@@ -4176,12 +4750,21 @@ int __init floppy_init(void)
 		fdc = i;
 		CLEARSTRUCT(FDCS);
 		FDCS->dtr = -1;
+#ifndef CONFIG_PC9800
 		FDCS->dor = 0x4;
+#else
+		FDCS->dor = 0;
+#endif
 #ifdef __sparc__
 		/*sparcs don't have a DOR reset which we can fall back on to*/
 		FDCS->version = FDC_82072A;
 #endif
 	}
+
+#ifdef CONFIG_PC9800
+	if((fd_inb(FD_MODE_CHANGE) & 1)==0)
+		FDC1 = 0xC8;
+#endif
 
 	use_virtual_dma = can_use_virtual_dma & 1;
 	fdc_state[0].address = FDC1;
@@ -4224,6 +4807,7 @@ int __init floppy_init(void)
 		if (FDCS->address == -1)
 			continue;
 		FDCS->rawcmd = 2;
+#ifndef CONFIG_PC9800
 		if (user_reset_fdc(-1,FD_RESET_ALWAYS,0)){
  			/* free ioports reserved by floppy_grab_irq_and_dma() */
  			release_region(FDCS->address, 6);
@@ -4232,12 +4816,24 @@ int __init floppy_init(void)
 			FDCS->version = FDC_NONE;
 			continue;
 		}
+#else /* CONFIG_PC9800 */
+		user_reset_fdc(-1,FD_RESET_ALWAYS,0);
+#endif /* !CONFIG_PC9800 */
+
 		/* Try to determine the floppy controller type */
 		FDCS->version = get_fdc_version();
 		if (FDCS->version == FDC_NONE){
  			/* free ioports reserved by floppy_grab_irq_and_dma() */
+#ifndef CONFIG_PC9800
  			release_region(FDCS->address, 6);
  			release_region(FDCS->address+7, 1);
+#else /* CONFIG_PC9800 */
+			release_region(FDCS->address,1);
+			release_region(FDCS->address+2,1);
+			release_region(FDCS->address+4,1);
+			release_region(0xbe,1);
+			release_region(0x4be,1);
+#endif /* !CONFIG_PC9800 */
 			FDCS->address = -1;
 			continue;
 		}
@@ -4255,7 +4851,10 @@ int __init floppy_init(void)
 	del_timer(&fd_timeout);
 	current_drive = 0;
 	floppy_release_irq_and_dma();
+#ifndef CONFIG_PC9800 /* no message */
 	initialising=0;
+#endif /* !CONFIG_PC9800 no message */
+
 	if (have_no_fdc) 
 	{
 		DPRINT("no floppy controllers found\n");
@@ -4315,6 +4914,7 @@ static int floppy_grab_irq_and_dma(void)
 
 	for (fdc=0; fdc< N_FDC; fdc++){
 		if (FDCS->address != -1){
+#ifndef CONFIG_PC9800
 			if (!request_region(FDCS->address, 6, "floppy")) {
 				DPRINT("Floppy io-port 0x%04lx in use\n", FDCS->address);
 				goto cleanup1;
@@ -4323,22 +4923,49 @@ static int floppy_grab_irq_and_dma(void)
 				DPRINT("Floppy io-port 0x%04lx in use\n", FDCS->address + 7);
 				goto cleanup2;
 			}
+#else /* CONFIG_PC9800 */
+			if (!request_region(FDCS->address, -5, "floppy")) {
+				DPRINT("Floppy io-port 0x%04lx in use\n",
+				       FDCS->address);
+				goto cleanup1;
+			}
+#endif /* CONFIG_PC9800 */
+
 			/* address + 6 is reserved, and may be taken by IDE.
 			 * Unfortunately, Adaptec doesn't know this :-(, */
 		}
 	}
+#ifdef CONFIG_PC9800
+	if (!request_region(0x00be, 1, "floppy mode change"))
+		goto cleanup1;
+	if (!request_region(0x04be, 1, "floppy ex. mode change"))
+		goto cleanup2;
+#endif
+
 	for (fdc=0; fdc< N_FDC; fdc++){
 		if (FDCS->address != -1){
 			reset_fdc_info(1);
+#ifndef CONFIG_PC9800
 			fd_outb(FDCS->dor, FD_DOR);
+#else
+			fd_outb(FDCS->dor, FD_MODE);
+#endif
 		}
 	}
 	fdc = 0;
+#ifndef CONFIG_PC9800
 	set_dor(0, ~0, 8);  /* avoid immediate interrupt */
+#else
+	fd_outb((FDCS->dor & 8), FD_MODE);
+#endif
 
 	for (fdc = 0; fdc < N_FDC; fdc++)
 		if (FDCS->address != -1)
+#ifndef CONFIG_PC9800
 			fd_outb(FDCS->dor, FD_DOR);
+#else
+			fd_outb(FDCS->dor, FD_MODE);
+#endif
 	/*
 	 *	The driver will try and free resources and relies on us
 	 *	to know if they were allocated or not.
@@ -4347,14 +4974,26 @@ static int floppy_grab_irq_and_dma(void)
 	irqdma_allocated = 1;
 	return 0;
 cleanup2:
+#ifndef CONFIG_PC9800
 	release_region(FDCS->address, 6);
+#else
+	release_region(0x00be, 1);
+#endif
 cleanup1:
 	fd_free_irq();
 	fd_free_dma();
 	while(--fdc >= 0) {
+#ifndef CONFIG_PC9800
 		release_region(FDCS->address, 6);
 		release_region(FDCS->address + 7, 1);
+#else
+		release_region(FDCS->address, -5);
+#endif
 	}
+#ifdef CONFIG_PC9800
+	release_region(0x00be, 1);
+	release_region(0x04be, 1);
+#endif
 	MOD_DEC_USE_COUNT;
 	spin_lock_irqsave(&floppy_usage_lock, flags);
 	usage_count--;
@@ -4387,10 +5026,14 @@ static void floppy_release_irq_and_dma(void)
 		fd_free_irq();
 		irqdma_allocated=0;
 	}
+#ifndef CONFIG_PC9800
 	set_dor(0, ~0, 8);
 #if N_FDC > 1
 	set_dor(1, ~8, 0);
 #endif
+#else /* CONFIG_PC9800 */
+	fd_outb(0, FD_MODE);
+#endif /* !CONFIG_PC9800 */
 	floppy_enable_hlt();
 
 	if (floppy_track_buffer && max_buffer_sectors) {
@@ -4417,11 +5060,19 @@ static void floppy_release_irq_and_dma(void)
 		printk("task queue still active\n");
 #endif
 	old_fdc = fdc;
+#ifndef CONFIG_PC9800
 	for (fdc = 0; fdc < N_FDC; fdc++)
 		if (FDCS->address != -1) {
 			release_region(FDCS->address, 6);
 			release_region(FDCS->address+7, 1);
 		}
+#else /* CONFIG_PC9800 */
+	release_region(FDCS->address,1);
+	release_region(FDCS->address+2,1);
+	release_region(FDCS->address+4,1);
+	release_region(0xbe,1);
+	release_region(0x4be,1);
+#endif /* !CONFIG_PC9800 */
 	fdc = old_fdc;
 	MOD_DEC_USE_COUNT;
 }
@@ -4470,7 +5121,11 @@ void cleanup_module(void)
 MODULE_PARM(floppy,"s");
 MODULE_PARM(FLOPPY_IRQ,"i");
 MODULE_PARM(FLOPPY_DMA,"i");
+#ifndef CONFIG_PC9800
 MODULE_AUTHOR("Alain L. Knaff");
+#else
+MODULE_AUTHOR("N.Fujita & KMC 'seraphim' Project");
+#endif
 MODULE_SUPPORTED_DEVICE("fd");
 
 #else

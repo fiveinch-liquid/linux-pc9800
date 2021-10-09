@@ -40,6 +40,10 @@
 #include <asm/byteorder.h>
 #include <asm/unaligned.h>
 
+#ifdef CONFIG_PC9800
+#include "console_pc9800.h"
+#endif
+
 #undef attr
 #undef org
 #undef addr
@@ -129,6 +133,9 @@ vcs_read(struct file *file, char *buf, size_t count, loff_t *ppos)
 		goto unlock_out;
 	read = 0;
 	ret = 0;
+#ifdef CONFIG_PC9800
+	/* need modification for kanji */
+#endif
 	while (count) {
 		char *con_buf0, *con_buf_start;
 		long this_round, size;
@@ -221,7 +228,15 @@ vcs_read(struct file *file, char *buf, size_t count, loff_t *ppos)
 				this_round = (this_round + 1) >> 1;
 
 				while (this_round) {
+#ifndef CONFIG_PC9800
 					*tmp_buf++ = vcs_scr_readw(currcons, org++);
+#else
+					/* need modification for kanji */
+					*tmp_buf++ = (vcs_scr_readw(currcons, org) & 0xff)
+						| ((vcs_scr_readw(currcons, pc9800_attr_offset(org)) & 0xff) << 8);
+					org++;
+#endif
+
 					this_round --;
 					if (++col == maxcol) {
 						org = screen_pos(currcons, p, viewed);
@@ -229,6 +244,9 @@ vcs_read(struct file *file, char *buf, size_t count, loff_t *ppos)
 						p += maxcol;
 					}
 				}
+#ifdef CONFIG_PC9800
+/* need modification for kanji */
+#endif
 			}
 		}
 
@@ -384,6 +402,9 @@ vcs_write(struct file *file, const char *buf, size_t count, loff_t *ppos)
 
 					this_round--;
 					c = *con_buf0++;
+#ifdef CONFIG_PC9800
+					vcs_scr_writew(currcons, c, pc9800_attr_offset(org));
+#else /* !CONFIG_PC9800 */
 #ifdef __BIG_ENDIAN
 					vcs_scr_writew(currcons, c |
 					     (vcs_scr_readw(currcons, org) & 0xff00), org);
@@ -391,6 +412,7 @@ vcs_write(struct file *file, const char *buf, size_t count, loff_t *ppos)
 					vcs_scr_writew(currcons, (c << 8) |
 					     (vcs_scr_readw(currcons, org) & 0xff), org);
 #endif
+#endif /* CONFIG_PC9800 */
 					org++;
 					p++;
 					if (++col == maxcol) {
@@ -405,7 +427,14 @@ vcs_write(struct file *file, const char *buf, size_t count, loff_t *ppos)
 				unsigned short w;
 
 				w = get_unaligned(((const unsigned short *)con_buf0));
+#ifndef CONFIG_PC9800
 				vcs_scr_writew(currcons, w, org++);
+#else
+				vcs_scr_writew(currcons, w & 0xff, org);
+				vcs_scr_writew(currcons, w >> 8,
+					       pc9800_attr_offset (org));
+				org++;
+#endif
 				con_buf0 += 2;
 				this_round -= 2;
 				if (++col == maxcol) {
@@ -418,10 +447,14 @@ vcs_write(struct file *file, const char *buf, size_t count, loff_t *ppos)
 				unsigned char c;
 
 				c = *con_buf0++;
+#ifdef CONFIG_PC9800
+				vcs_scr_writew(currcons, c, org);
+#else
 #ifdef __BIG_ENDIAN
 				vcs_scr_writew(currcons, (vcs_scr_readw(currcons, org) & 0xff) | (c << 8), org);
 #else
 				vcs_scr_writew(currcons, (vcs_scr_readw(currcons, org) & 0xff00) | c, org);
+#endif
 #endif
 			}
 		}

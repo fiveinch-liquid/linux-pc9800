@@ -70,9 +70,15 @@ struct mpu_config
 	  int            *osp;
   };
 
+#ifndef CONFIG_PC9800
 #define	DATAPORT(base)   (base)
 #define	COMDPORT(base)   (base+1)
 #define	STATPORT(base)   (base+1)
+#else /* CONFIG_PC9800 */
+#define	DATAPORT(base)   (base)
+#define	COMDPORT(base)   (base+2)
+#define	STATPORT(base)   (base+2)
+#endif /* CONFIG_PC9800 */
 
 
 static void mpu401_close(int dev);
@@ -1157,8 +1163,14 @@ static int reset_mpu401(struct mpu_config *devc)
 			save_flags(flags);
 			cli();
 			if (input_avail(devc))
+#ifndef CONFIG_PC9800_118
 				if (read_data(devc) == MPU_ACK)
 					ok = 1;
+#else
+				/* PC-9801-118 does not respond ACK
+				   for RESET command. */
+				read_data(devc);
+#endif
 			restore_flags(flags);
 		}
 
@@ -1213,7 +1225,11 @@ int probe_mpu401(struct address_info *hw_config)
 	if (hw_config->always_detect)
 		return 1;
 
+#ifndef CONFIG_PC9800
 	if (inb(hw_config->io_base + 1) == 0xff)
+#else /* CONFIG_PC9800 */
+	if (inb(hw_config->io_base + 2) == 0xff)
+#endif /* CONFIG_PC9800 */
 	{
 		DDB(printk("MPU401: Port %x looks dead.\n", hw_config->io_base));
 		return 0;	/* Just bus float? */

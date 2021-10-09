@@ -15,7 +15,7 @@ export-objs    := fbmem.o fbcmap.o fbcon.o fbmon.o modedb.o \
 		  fbcon-iplan2p8.o fbcon-vga-planes.o fbcon-cfb16.o \
 		  fbcon-cfb2.o fbcon-cfb24.o fbcon-cfb32.o fbcon-cfb4.o \
 		  fbcon-cfb8.o fbcon-mac.o fbcon-mfb.o \
-		  cyber2000fb.o fbcon-hga.o
+		  cyber2000fb.o fbcon-hga.o fbcon-egc.o
 
 # Each configuration option enables a list of files.
 
@@ -23,6 +23,7 @@ obj-$(CONFIG_DUMMY_CONSOLE)       += dummycon.o
 obj-$(CONFIG_SGI_NEWPORT_CONSOLE) += newport_con.o
 obj-$(CONFIG_PROM_CONSOLE)        += promcon.o promcon_tbl.o
 obj-$(CONFIG_VGA_CONSOLE)         += vgacon.o
+obj-$(CONFIG_GDC_CONSOLE)         += gdccon.o
 obj-$(CONFIG_MDA_CONSOLE)         += mdacon.o
 
 obj-$(CONFIG_FONT_SUN8x16)        += font_sun8x16.o
@@ -67,6 +68,7 @@ obj-$(CONFIG_FB_S3TRIO)           += S3triofb.o
 obj-$(CONFIG_FB_TGA)              += tgafb.o fbgen.o
 obj-$(CONFIG_FB_VESA)             += vesafb.o 
 obj-$(CONFIG_FB_VGA16)            += vga16fb.o fbcon-vga-planes.o
+obj-$(CONFIG_FB_EGC)              += egcfb.o fbcon-egc.o
 obj-$(CONFIG_FB_VIRGE)            += virgefb.o
 obj-$(CONFIG_FB_G364)             += g364fb.o
 obj-$(CONFIG_FB_FM2)              += fm2fb.o

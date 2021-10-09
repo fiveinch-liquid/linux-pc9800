@@ -36,6 +36,11 @@
 #include <asm/e820.h>
 #include <asm/apic.h>
 
+#ifdef CONFIG_PC9800
+#include <asm/pc9800_sca.h>
+#include <asm/pc9800_debug.h>
+#endif
+
 unsigned long highstart_pfn, highend_pfn;
 static unsigned long totalram_pages;
 static unsigned long totalhigh_pages;
@@ -455,6 +460,15 @@ void __init mem_init(void)
 
 	/* clear the zero-page */
 	memset(empty_zero_page, 0, PAGE_SIZE);
+
+#if 0
+#ifdef CONFIG_PC9800
+	/* =PC9800 DEBUG= */
+	printk("start_mem = %lx, start_low_mem = %lx, endbase=%lx, end_mem=%lx\n", start_mem, start_low_mem, endbase, end_mem);
+	printk("_text=%x, _etext=%x, _edata=%x, &__init_begin=%p, &__init_end=%p\n", _text, _etext, _edata, &__init_begin, &__init_end);
+	printk("&__bss_start=%p, start_mem=%lx\n", &__bss_start, start_mem);
+#endif
+#endif
 
 	/* this will put all low memory onto the freelists */
 	totalram_pages += free_all_bootmem();

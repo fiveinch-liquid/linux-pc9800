@@ -79,6 +79,10 @@ struct resource_list {
 #define IORESOURCE_MEM_SHADOWABLE	(1<<5)	/* dup: IORESOURCE_SHADOWABLE */
 #define IORESOURCE_MEM_EXPANSIONROM	(1<<6)
 
+#ifdef CONFIG_PC9800
+#define IORESOURCE98_SPARSE 0x100000 /* sparse region */
+#endif
+
 /* PC/ISA/whatever - the normal PC address spaces: IO and memory */
 extern struct resource ioport_resource;
 extern struct resource iomem_resource;
@@ -98,7 +102,6 @@ extern int allocate_resource(struct resource *root, struct resource *new,
 /* Convenience shorthand with allocation */
 #define request_region(start,n,name)	__request_region(&ioport_resource, (start), (n), (name))
 #define request_mem_region(start,n,name) __request_region(&iomem_resource, (start), (n), (name))
-
 extern struct resource * __request_region(struct resource *, unsigned long start, unsigned long n, const char *name);
 
 /* Compatibility cruft */

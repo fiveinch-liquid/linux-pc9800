@@ -48,14 +48,22 @@
 
 #define C_P(card,port) (((card)<<6|(port)<<3) + 1)
 
+#ifndef CONFIG_PC9800
 #define STD_SERIAL_PORT_DEFNS			\
 	/* UART CLK   PORT IRQ     FLAGS        */			\
 	{ 0, BASE_BAUD, 0x3F8, 4, STD_COM_FLAGS },	/* ttyS0 */	\
 	{ 0, BASE_BAUD, 0x2F8, 3, STD_COM_FLAGS },	/* ttyS1 */	\
 	{ 0, BASE_BAUD, 0x3E8, 4, STD_COM_FLAGS },	/* ttyS2 */	\
 	{ 0, BASE_BAUD, 0x2E8, 3, STD_COM4_FLAGS },	/* ttyS3 */
+#else
+#define STD_SERIAL_PORT_DEFNS			\
+	/* UART CLK   PORT IRQ     FLAGS        */			\
+	{ 0, BASE_BAUD, 0x30, 4, STD_COM_FLAGS },	/* ttyS0 */	\
+	{ 0, BASE_BAUD, 0x238, 5, STD_COM_FLAGS },	/* ttyS1 */
+#endif /* CONFIG_PC9800 */
 
 
+#ifndef CONFIG_PC9800
 #ifdef CONFIG_SERIAL_MANY_PORTS
 #define EXTRA_SERIAL_PORT_DEFNS			\
 	{ 0, BASE_BAUD, 0x1A0, 9, FOURPORT_FLAGS }, 	/* ttyS4 */	\
@@ -89,6 +97,16 @@
 #else
 #define EXTRA_SERIAL_PORT_DEFNS
 #endif
+#else /* CONFIG_PC9800 */
+#ifdef CONFIG_MC16550II
+#define EXTRA_SERIAL_PORT_DEFNS			\
+	/* MC16550II */				\
+	{ 0, BASE_BAUD*4, CONFIG_MC16550II_BASE, CONFIG_MC16550II_IRQ, STD_COM_FLAGS }, /* ttyS2 */	\
+	{ 0, BASE_BAUD*4, CONFIG_MC16550II_BASE+0x800, CONFIG_MC16550II_IRQ, STD_COM_FLAGS }, /* ttyS3 */
+#else
+#define EXTRA_SERIAL_PORT_DEFNS
+#endif
+#endif /* CONFIG_PC9800 */
 
 /* You can have up to four HUB6's in the system, but I've only
  * included two cards here for a total of twelve ports.

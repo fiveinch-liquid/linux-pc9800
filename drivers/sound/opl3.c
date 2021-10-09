@@ -37,6 +37,10 @@
 #include "opl3.h"
 #include "opl3_hw.h"
 
+#ifdef CONFIG_PC9800
+#include "sound_pc9800.h"
+#endif
+
 #define MAX_VOICE	18
 #define OFFS_4OP	11
 
@@ -74,6 +78,9 @@ typedef struct opl_devinfo
 
 	int             is_opl4;
 	int            *osp;
+#ifdef CONFIG_PC9800
+	int             is_sb16;
+#endif
 } opl_devinfo;
 
 static struct opl_devinfo *devc = NULL;
@@ -186,6 +193,27 @@ int opl3_detect(int ioaddr, int *osp)
 	devc->osp = osp;
 	devc->base = ioaddr;
 
+#ifdef CONFIG_PC9800
+	switch (PC9800_SOUND_ID ()) {
+	case PC9800_SOUND_ID_XMATE:
+	case PC9800_SOUND_ID_118:
+		outb (inb (PC9800_SOUND_IO_ID) | 0x3, PC9800_SOUND_IO_ID);
+		printk(KERN_INFO "opl3: PC-9801-118 (or compatible) found,"
+		       " and enabled OPL-3 functions.\n");
+		devc->is_sb16 = 0;
+		break;
+	case PC9800_SOUND_ID_UNKNOWN:
+		printk(KERN_INFO "opl3: Sound ID is UNKNOWN."
+		       " Try to detect SB16 for PC-9800.\n");
+		devc->is_sb16 = 1;
+		break;
+	default:
+		printk(KERN_ERR "opl3: "
+		       "This sound system doesn't support OPL-3.\n");
+		return 0;
+	}
+#endif
+
 	/* Reset timers 1 and 2 */
 	opl3_command(ioaddr, TIMER_CONTROL_REGISTER, TIMER1_MASK | TIMER2_MASK);
 
@@ -216,10 +244,15 @@ int opl3_detect(int ioaddr, int *osp)
 		 * only after a cold boot. In addition the OPL4 port
 		 * of the chip may not be connected to the PC bus at all.
 		 */
-
+#ifndef CONFIG_PC9800
 		opl3_command(ioaddr + 2, OPL3_MODE_REGISTER, 0x00);
 		opl3_command(ioaddr + 2, OPL3_MODE_REGISTER, OPL3_ENABLE | OPL4_ENABLE);
-
+#else
+		opl3_command(ioaddr + (devc->is_sb16 ? 0x200 : 2),
+			     OPL3_MODE_REGISTER, 0x00);
+		opl3_command(ioaddr + (devc->is_sb16 ? 0x200 : 2),
+			     OPL3_MODE_REGISTER, OPL3_ENABLE | OPL4_ENABLE);
+#endif
 		if ((tmp = inb(ioaddr)) == 0x02)	/* Have a OPL4 */
 		{
 			detected_model = 4;
@@ -248,7 +281,12 @@ int opl3_detect(int ioaddr, int *osp)
 				detected_model = 3;
 			}
 		}
+#ifndef CONFIG_PC9800
 		opl3_command(ioaddr + 2, OPL3_MODE_REGISTER, 0);
+#else
+		opl3_command(ioaddr + (devc->is_sb16 ? 0x200 : 2),
+			     OPL3_MODE_REGISTER, 0);
+#endif
 	}
 	for (i = 0; i < 9; i++)
 		opl3_command(ioaddr, KEYON_BLOCK + i, 0);	/*
@@ -735,9 +773,12 @@ static void opl3_command    (int io_addr, unsigned int addr, unsigned int val)
 	else
 		for (i = 0; i < 2; i++)
 			inb(io_addr);
-
+#ifndef CONFIG_PC9800
 	outb(((unsigned char) (val & 0xff)), io_addr + 1);
-
+#else
+	outb(((unsigned char) (val & 0xff)),
+	     io_addr + (devc->is_sb16 ? 0x100 : 1));
+#endif
 	if (devc->model != 2)
 		udelay(30);
 	else
@@ -1102,6 +1143,34 @@ static struct synth_operations opl3_operations =
 	setup_voice:	opl3_setup_voice
 };
 
+#ifdef CONFIG_PC9800_118
+static inline void
+pc9800_118_opl3_init (unsigned long ioaddr)
+{
+	/* ??? */
+	outb(0x00, ioaddr + 6);
+	inb(ioaddr + 7);
+	/* Enable OPL-3 Function */
+	outb(inb(PC9800_SOUND_IO_ID)|0x03, PC9800_SOUND_IO_ID);
+
+	/* Initialize? */
+	opl3_command(ioaddr + 2, 0x05, 0x05);
+	opl3_command(ioaddr + 2, 0x08, 0x04);
+	opl3_command(ioaddr + 2, 0x08, 0x00);
+	opl3_command(ioaddr, 0xf7, 0x00);
+	opl3_command(ioaddr, 0x04, 0x60);
+	opl3_command(ioaddr, 0x04, 0x80);
+	inb(ioaddr);
+
+	opl3_command(ioaddr, 0x02, 0xff);
+	opl3_command(ioaddr, 0x04, 0x21);
+	inb(ioaddr);
+
+	opl3_command(ioaddr, 0x04, 0x60);
+	opl3_command(ioaddr, 0x04, 0x80);
+}
+#endif
+
 int opl3_init(int ioaddr, int *osp, struct module *owner)
 {
 	int i;
@@ -1119,6 +1188,27 @@ int opl3_init(int ioaddr, int *osp, struct module *owner)
 		return -1;
 	}
 
+#ifdef CONFIG_PC9800
+	/* Inspect Sound Functions ID */
+	switch(PC9800_SOUND_ID()){
+#ifdef CONFIG_PC9800_118
+	case PC9800_SOUND_ID_XMATE:
+	case PC9800_SOUND_ID_118:
+		pc9800_118_opl3_init(ioaddr);
+		devc->is_sb16 = 0;
+		break;
+#endif
+#ifdef CONFIG_SB16_PC9800
+	case PC9800_SOUND_ID_UNKNOWN:
+		devc->is_sb16 = 1;
+		break;
+#endif
+	default:
+		printk(KERN_ERR "opl3: Sorry, this driver is not configured for your sound system.\n");
+		return -1;
+	}
+#endif
+
 	devc->nr_voice = 9;
 
 	devc->fm_info.device = 0;
@@ -1131,7 +1221,14 @@ int opl3_init(int ioaddr, int *osp, struct module *owner)
 	devc->fm_info.capabilities = 0;
 	devc->left_io = ioaddr;
 	devc->right_io = ioaddr + 2;
-
+#ifdef CONFIG_PC9800
+#define OPL3_LEFT     0x20d2
+#define OPL3_RIGHT    0x22d2
+	if(devc->is_sb16){
+		devc->left_io = OPL3_LEFT;
+		devc->right_io = OPL3_RIGHT;
+	}
+#endif
 	if (detected_model <= 2)
 		devc->model = 1;
 	else
@@ -1210,7 +1307,6 @@ static int __init init_opl3 (void)
 		{
 			return -ENODEV;
 		}
-
 		me = opl3_init(io, NULL, THIS_MODULE);
 	}
 
@@ -1222,10 +1318,20 @@ static void __exit cleanup_opl3(void)
 	if (devc && io != -1)
 	{
 		if (devc->base) {
+#ifndef CONFIG_PC9800
 			release_region(devc->base,4);
 			if (devc->is_opl4)
 				release_region(devc->base - 8, 2);
-		}
+#else
+			if(devc->is_sb16){
+				release_region(devc->base,4);
+				release_region(devc->base+0x200,2);
+				release_region(devc->base+0x800,2);
+			}
+			else
+				release_region(devc->base,8);
+			/* XXX - OPL4? */
+#endif
 		kfree(devc);
 		devc = NULL;
 		sound_unload_synthdev(me);
@@ -1234,6 +1340,9 @@ static void __exit cleanup_opl3(void)
 
 module_init(init_opl3);
 module_exit(cleanup_opl3);
+#ifdef CONFIG_PC9800
+MODULE_PARM(type, "i");
+#endif
 
 #ifndef MODULE
 static int __init setup_opl3(char *str)

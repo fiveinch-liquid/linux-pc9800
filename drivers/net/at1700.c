@@ -34,6 +34,10 @@
 	only is it difficult to detect, it also moves around in I/O space in
 	response to inb()s from other device probes!
 */
+/*
+	99/03/03  Allied Telesis RE1000 Plus support by T.Hagawa
+	99/12/30	port to 2.3.35 by K.Takai
+*/
 
 #include <linux/config.h>
 #include <linux/module.h>
@@ -69,6 +73,8 @@ static char version[] __initdata =
 /* When to switch from the 64-entry multicast filter to Rx-all-multicast. */
 #define MC_FILTERBREAK 64
 
+#ifndef CONFIG_PC9800
+
 /* These unusual address orders are used to verify the CONFIG register. */
 
 static int fmv18x_probe_list[] __initdata = {
@@ -101,6 +107,14 @@ static int at1700_irq_pattern[] __initdata = {
 };
 #endif
 
+#else /* CONFIG_PC9800 */
+
+static int at1700_probe_list[] = {
+	0x1d6, 0x1d8, 0x1da, 0x1d4, 0xd4, 0xd2, 0xd8, 0xd0, 0
+};
+
+#endif /* CONFIG_PC9800 */
+
 /* use 0 for production, 1 for verification, >2 for debug */
 #ifndef NET_DEBUG
 #define NET_DEBUG 1
@@ -125,6 +139,7 @@ struct net_local {
 
 
 /* Offsets from the base address. */
+#ifndef CONFIG_PC9800
 #define STATUS			0
 #define TX_STATUS		0
 #define RX_STATUS		1
@@ -139,6 +154,7 @@ struct net_local {
 #define TX_START		10
 #define COL16CNTL		11		/* Controll Reg for 16 collisions */
 #define MODE13			13
+#define RX_CTRL			14
 /* Configuration registers only on the '865A/B chips. */
 #define EEPROM_Ctrl 	16
 #define EEPROM_Data 	17
@@ -147,8 +163,36 @@ struct net_local {
 #define IOCONFIG		18		/* Either read the jumper, or move the I/O. */
 #define IOCONFIG1		19
 #define	SAPROM			20		/* The station address PROM, if no EEPROM. */
+#defone MODE24			24
 #define RESET			31		/* Write to reset some parts of the chip. */
 #define AT1700_IO_EXTENT	32
+#else /* CONFIG_PC9800 */
+#define STATUS			(0x0000)
+#define TX_STATUS		(0x0000)
+#define RX_STATUS		(0x0001)
+#define TX_INTR			(0x0200)/* Bit-mapped interrupt enable registers. */
+#define RX_INTR			(0x0201)
+#define TX_MODE			(0x0400)
+#define RX_MODE			(0x0401)
+#define CONFIG_0		(0x0600)/* Misc. configuration settings. */
+#define CONFIG_1		(0x0601)
+/* Run-time register bank 2 definitions. */
+#define DATAPORT		(0x0800)/* Word-wide DMA or programmed-I/O dataport. */
+#define TX_START		(0x0a00)
+#define COL16CNTL		(0x0a01)/* Controll Reg for 16 collisions */
+#define MODE13			(0x0c01)
+#define RX_CTRL			(0x0e00)
+/* Configuration registers only on the '865A/B chips. */
+#define EEPROM_Ctrl 	(0x1000)
+#define EEPROM_Data 	(0x1200)
+#define IOCONFIG		(0x1400)/* Either read the jumper, or move the I/O. */
+#define IOCONFIG1		(0x1600)
+#define	MODE24			(0x1800)/* The station address PROM, if no EEPROM. */
+#define RESET			(0x1e01)/* Write to reset some parts of the chip. */
+#undef AT1700_IO_EXTENT
+#define RE1000P_OFFSET(o) ({ int _o_ = (o); (_o_ & ~1) * 0x100 + (_o_ & 1); })
+#endif /* CONFIG_PC9800 */
+
 
 #define TX_TIMEOUT		10
 
@@ -184,6 +228,7 @@ static struct at1720_mca_adapters_struct at1720_mca_adapters[] __initdata = {
 };
 #endif
 
+
 /* Check for a network adaptor of this type, and return '0' iff one exists.
    If dev->base_addr == 0, probe all likely locations.
    If dev->base_addr == 1, always return failure.
@@ -198,13 +243,34 @@ int __init at1700_probe(struct net_device *dev)
 
 	SET_MODULE_OWNER(dev);
 
+	printk (KERN_DEBUG "at1700: probing...\n");
+#ifndef CONFIG_PC9800
 	if (base_addr > 0x1ff)		/* Check a single specified location. */
 		return at1700_probe1(dev, base_addr);
 	else if (base_addr != 0)	/* Don't probe at all. */
 		return -ENXIO;
+#else
+	if (base_addr) {
+		for (i = 0; at1700_probe_list[i]; i++)
+			if (base_addr == at1700_probe_list[i])
+				return at1700_probe1(dev, base_addr);
+		return -ENXIO;
+	}
+#endif
 
 	for (i = 0; at1700_probe_list[i]; i++) {
 		int ioaddr = at1700_probe_list[i];
+#ifndef CONFIG_PC9800
+#else
+		int j;
+		for (j = 0; j < 0x2000 && !check_region (ioaddr + j, 2); j += 0x0200)
+			;
+		if (j < 0x2000) {
+			printk (KERN_DEBUG "re1000plus: check_region on %#x (base %#x)"
+					" failed\n", ioaddr + j, ioaddr);
+			continue;
+		}
+#endif
 		if (at1700_probe1(dev, ioaddr) == 0)
 			return 0;
 	}
@@ -221,9 +287,13 @@ int __init at1700_probe(struct net_device *dev)
 
 static int __init at1700_probe1(struct net_device *dev, int ioaddr)
 {
+#ifndef CONFIG_PC9800
 	char fmv_irqmap[4] = {3, 7, 10, 15};
 	char fmv_irqmap_pnp[8] = {3, 4, 5, 7, 9, 10, 11, 15};
 	char at1700_irqmap[8] = {3, 4, 5, 9, 10, 11, 14, 15};
+#else
+	static char re1000plus_irqmap[4] = {3, 5, 6, 12};
+#endif
 	unsigned int i, irq, is_fmv18x = 0, is_at1700 = 0;
 	int slot, ret = -ENODEV;
 	struct net_local *lp;
@@ -305,10 +375,12 @@ static int __init at1700_probe1(struct net_device *dev, int ioaddr)
 		&& read_eeprom(ioaddr, 4) == 0x0000
 		&& (read_eeprom(ioaddr, 5) & 0xff00) == 0xF400)
 		is_at1700 = 1;
+#ifndef CONFIG_PC9800
 	else if (inb(ioaddr   + SAPROM    ) == 0x00
 		&& inb(ioaddr + SAPROM + 1) == 0x00
 		&& inb(ioaddr + SAPROM + 2) == 0x0e)
 		is_fmv18x = 1;
+#endif
 	else {
 		ret = -ENODEV;
 		goto err_out;
@@ -321,6 +393,7 @@ found:
 		/* Reset the internal state machines. */
 	outb(0, ioaddr + RESET);
 
+#ifndef CONFIG_PC9800
 	if (is_at1700)
 		irq = at1700_irqmap[(read_eeprom(ioaddr, 12)&0x04)
 						   | (read_eeprom(ioaddr, 0)>>14)];
@@ -343,9 +416,20 @@ found:
 			irq = fmv_irqmap[(inb(ioaddr + IOCONFIG)>>6) & 0x03];
 		}
 	}
+#else
+# if 0
+	printk ("%s: BMPR19 = %#x\n", dev->name, inb (ioaddr + IOCONFIG1));
+# endif
+	irq = re1000plus_irqmap[inb (ioaddr + IOCONFIG1) >> 6];
+#endif
 
+#ifndef CONFIG_PC9800
 	printk("%s: %s found at %#3x, IRQ %d, address ", dev->name,
 		   is_at1700 ? "AT1700" : "FMV-18X", ioaddr, irq);
+#else
+	printk ("%s: RE1000plus found at %#3x, IRQ %d, address ", dev->name,
+			ioaddr, irq);
+#endif
 
 	dev->base_addr = ioaddr;
 	dev->irq = irq;
@@ -356,12 +440,14 @@ found:
 			printk("%04x", eeprom_val);
 			((unsigned short *)dev->dev_addr)[i] = ntohs(eeprom_val);
 		}
+#ifndef CONFIG_PC9800
 	} else {
 		for(i = 0; i < 6; i++) {
 			unsigned char val = inb(ioaddr + SAPROM + i);
 			printk("%02x", val);
 			dev->dev_addr[i] = val;
 		}
+#endif
 	}
 
 	/* The EEPROM word 12 bit 0x0400 means use regular 100 ohm 10baseT signals,
@@ -375,6 +461,7 @@ found:
 		if (is_at1700) {
 			ushort setup_value = read_eeprom(ioaddr, 12);
 			dev->if_port = setup_value >> 8;
+#ifndef CONFIG_PC9800
 		} else {
 			ushort setup_value = inb(ioaddr + CARDSTATUS);
 			switch (setup_value & 0x07) {
@@ -386,6 +473,7 @@ found:
 			default:   /* auto-sense */
 				dev->if_port = 0x00; break;
 			}
+#endif
 		}
 		printk(" %s interface.\n", porttype[(dev->if_port>>3) & 3]);
 	}
@@ -397,18 +485,30 @@ found:
 	/* Set the station address in bank zero. */
 	outb(0x00, ioaddr + CONFIG_1);
 	for (i = 0; i < 6; i++)
+#ifndef CONFIG_PC9800
 		outb(dev->dev_addr[i], ioaddr + 8 + i);
+#else
+		outb(dev->dev_addr[i], ioaddr + RE1000P_OFFSET (8 + i));
+#endif
 
 	/* Switch to bank 1 and set the multicast table to accept none. */
 	outb(0x04, ioaddr + CONFIG_1);
 	for (i = 0; i < 8; i++)
+#ifndef CONFIG_PC9800
 		outb(0x00, ioaddr + 8 + i);
+#else
+		outb(0x00, ioaddr + RE1000P_OFFSET (8 + i));
+#endif
 
 
 	/* Switch to bank 2 */
 	/* Lock our I/O address, and set manual processing mode for 16 collisions. */
 	outb(0x08, ioaddr + CONFIG_1);
+#ifndef CONFIG_PC9800
 	outb(dev->if_port, ioaddr + MODE13);
+#else
+	outb(0, ioaddr + MODE13);
+#endif
 	outb(0x00, ioaddr + COL16CNTL);
 
 	if (net_debug)
@@ -452,7 +552,12 @@ err_out_priv:
 	kfree(dev->priv);
 	dev->priv = NULL;
 err_out:
+#ifndef CONFIG_PC9800
 	release_region(ioaddr, AT1700_IO_EXTENT);
+#else
+	for (i = 0; i < 0x2000; i += 0x0200)
+		release_region (ioaddr + i, 2);
+#endif
 	return ret;
 }
 
@@ -464,7 +569,11 @@ err_out:
 #define EE_DATA_READ	0x80	/* EEPROM chip data out, in reg. 17. */
 
 /* Delay between EEPROM clock transitions. */
+#ifndef CONFIG_PC9800
 #define eeprom_delay()	do {} while (0);
+#else
+#define eeprom_delay()	__asm__ ("out%B0 %%al,%0" :: "N"(0x5f))
+#endif
 
 /* The EEPROM commands include the alway-set leading bit. */
 #define EE_WRITE_CMD	(5 << 6)
@@ -547,12 +656,12 @@ static void net_tx_timeout (struct net_device *dev)
 		inw (ioaddr + STATUS), inb (ioaddr + TX_STATUS) & 0x80
 		? "IRQ conflict" : "network cable problem");
 	printk ("%s: timeout registers: %04x %04x %04x %04x %04x %04x %04x %04x.\n",
-	 dev->name, inw (ioaddr + 0), inw (ioaddr + 2), inw (ioaddr + 4),
-		inw (ioaddr + 6), inw (ioaddr + 8), inw (ioaddr + 10),
-		inw (ioaddr + 12), inw (ioaddr + 14));
+	 dev->name, inw(ioaddr + TX_STATUS), inw(ioaddr + TX_INTR), inw(ioaddr + TX_MODE),
+		inw(ioaddr + CONFIG_0), inw(ioaddr + DATAPORT), inw(ioaddr + TX_START),
+		inw(ioaddr + MODE13 - 1), inw(ioaddr + RX_CTRL));
 	lp->stats.tx_errors++;
 	/* ToDo: We should try to restart the adaptor... */
-	outw (0xffff, ioaddr + 24);
+    outw (0xffff, ioaddr + MODE24);
 	outw (0xffff, ioaddr + TX_STATUS);
 	outb (0x5a, ioaddr + CONFIG_0);
 	outb (0xe8, ioaddr + CONFIG_1);
@@ -698,7 +807,7 @@ net_rx(struct net_device *dev)
 				   dev->name, inb(ioaddr + RX_MODE), status);
 #ifndef final_version
 		if (status == 0) {
-			outb(0x05, ioaddr + 14);
+			outb(0x05, ioaddr + RX_CTRL);
 			break;
 		}
 #endif
@@ -718,7 +827,7 @@ net_rx(struct net_device *dev)
 					   dev->name, pkt_len);
 				/* Prime the FIFO and then flush the packet. */
 				inw(ioaddr + DATAPORT); inw(ioaddr + DATAPORT);
-				outb(0x05, ioaddr + 14);
+				outb(0x05, ioaddr + RX_CTRL);
 				lp->stats.rx_errors++;
 				break;
 			}
@@ -728,7 +837,7 @@ net_rx(struct net_device *dev)
 					   dev->name, pkt_len);
 				/* Prime the FIFO and then flush the packet. */
 				inw(ioaddr + DATAPORT); inw(ioaddr + DATAPORT);
-				outb(0x05, ioaddr + 14);
+				outb(0x05, ioaddr + RX_CTRL);
 				lp->stats.rx_dropped++;
 				break;
 			}
@@ -755,7 +864,7 @@ net_rx(struct net_device *dev)
 			if ((inb(ioaddr + RX_MODE) & 0x40) == 0x40)
 				break;
 			inw(ioaddr + DATAPORT);				/* dummy status read */
-			outb(0x05, ioaddr + 14);
+			outb(0x05, ioaddr + RX_CTRL);
 		}
 
 		if (net_debug > 5)
@@ -865,7 +974,11 @@ set_rx_mode(struct net_device *dev)
 		/* Switch to bank 1 and set the multicast table. */
 		outw((saved_bank & ~0x0C00) | 0x0480, ioaddr + CONFIG_0);
 		for (i = 0; i < 8; i++)
+#ifndef CONFIG_PC9800
 			outb(mc_filter[i], ioaddr + 8 + i);
+#else
+			outb(mc_filter[i], ioaddr + RE1000P_OFFSET (8 + i));
+#endif
 		memcpy(lp->mc_filter, mc_filter, sizeof(mc_filter));
 		outw(saved_bank, ioaddr + CONFIG_0);
 	}
@@ -875,7 +988,12 @@ set_rx_mode(struct net_device *dev)
 
 #ifdef MODULE
 static struct net_device dev_at1700;
+#ifndef CONFIG_PC9800
 static int io = 0x260;
+#else
+static int io = 0xd0;
+#endif
+
 static int irq;
 
 MODULE_PARM(io, "i");
@@ -915,7 +1033,15 @@ cleanup_module(void)
 
 	/* If we don't do this, we can't re-insmod it later. */
 	free_irq(dev_at1700.irq, NULL);
+#ifndef CONFIG_PC9800
 	release_region(dev_at1700.base_addr, AT1700_IO_EXTENT);
+#else
+	{
+		int i;
+		for (i = 0; i < 0x2000; i += 0x200)
+			release_region (dev_at1700.base_addr + i, 2);
+	}
+#endif
 }
 #endif /* MODULE */
 

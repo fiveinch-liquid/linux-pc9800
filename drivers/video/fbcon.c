@@ -569,7 +569,11 @@ static void fbcon_setup(int con, int init, int logo)
     if (con == fg_console && p->type != FB_TYPE_TEXT) {   
 	if (fbcon_softback_size) {
 	    if (!softback_buf) {
+#ifndef CONFIG_PC9800
 		softback_buf = (unsigned long)kmalloc(fbcon_softback_size, GFP_KERNEL);
+#else
+		softback_buf = (unsigned long)kmalloc(fbcon_softback_size * 2, GFP_KERNEL);
+#endif
 		if (!softback_buf) {
     	            fbcon_softback_size = 0;
     	            softback_top = 0;
@@ -655,16 +659,35 @@ static void fbcon_setup(int con, int init, int logo)
     	q = (unsigned short *)(conp->vc_origin + conp->vc_size_row * old_rows);
     	step = logo_lines * old_cols;
     	for (r = q - logo_lines * old_cols; r < q; r++)
+#ifndef CONFIG_PC9800
     	    if (scr_readw(r) != conp->vc_video_erase_char)
+#else
+	    if (scr_readw((unsigned short *)((unsigned long)r+conp->vc_screenbuf_size)) !=
+		conp->vc_video_erase_attr &&
+		scr_readw(r) != conp->vc_video_erase_char)
+#endif
     	    	break;
 	if (r != q && nr_rows >= old_rows + logo_lines) {
+#ifndef CONFIG_PC9800
     	    save = kmalloc(logo_lines * nr_cols * 2, GFP_KERNEL);
+#else
+	    save = kmalloc(logo_lines * nr_cols * 2 * 2, GFP_KERNEL);
+#endif
     	    if (save) {
     	        int i = old_cols < nr_cols ? old_cols : nr_cols;
     	    	scr_memsetw(save, conp->vc_video_erase_char, logo_lines * nr_cols * 2);
+#ifdef CONFIG_PC9800
+		scr_memsetw((u16 *)((unsigned long)save + logo_lines * nr_cols * 2),
+			     conp->vc_video_erase_attr, logo_lines * nr_cols * 2);
+#endif
     	    	r = q - step;
-    	    	for (cnt = 0; cnt < logo_lines; cnt++, r += i)
+		for (cnt = 0; cnt < logo_lines; cnt++, r += i) {
     	    		scr_memcpyw_from(save + cnt * nr_cols, r, 2 * i);
+#ifdef CONFIG_PC9800
+			scr_memcpyw_from((unsigned short *)((unsigned long)(save + logo_lines * nr_cols * 2)) + cnt * nr_cols,
+					 (unsigned short *)((unsigned long)r + conp->vc_screenbuf_size), 2 * i);
+#endif
+		}
     	    	r = q;
     	    }
     	}
@@ -673,6 +696,14 @@ static void fbcon_setup(int con, int init, int logo)
 	    r = q - step - old_cols;
     	    for (cnt = old_rows - logo_lines; cnt > 0; cnt--) {
     	    	scr_memcpyw(r + step, r, conp->vc_size_row);
+#ifdef CONFIG_PC9800
+		scr_memcpyw((unsigned short *)((unsigned long)r
+					       + conp->vc_screenbuf_size)
+			    + step,
+			    (unsigned short *)((unsigned long)r
+					       + conp->vc_screenbuf_size),
+			    conp->vc_size_row);
+#endif
     	    	r -= old_cols;
     	    }
     	    if (!save) {
@@ -683,6 +714,12 @@ static void fbcon_setup(int con, int init, int logo)
     	scr_memsetw((unsigned short *)conp->vc_origin,
 		    conp->vc_video_erase_char, 
     		conp->vc_size_row * logo_lines);
+#ifdef CONFIG_PC9800
+	scr_memsetw((unsigned short *)((unsigned long)conp->vc_origin
+				       + conp->vc_screenbuf_size),
+		    conp->vc_video_erase_attr, 
+		    conp->vc_size_row * logo_lines);
+#endif
     }
     
     /*
@@ -730,10 +767,25 @@ static void fbcon_setup(int con, int init, int logo)
 	    if (p->dispsw->clear_margins)
 		p->dispsw->clear_margins(conp, p, 0);
 	    update_screen(con);
+#ifdef CONFIG_PC9800
+	    /* reset attributes because of incompatibility */
+	    scr_memsetw((unsigned short *)((unsigned long)conp->vc_origin
+					   + conp->vc_screenbuf_size),
+			0x07, conp->vc_size_row * logo_lines);
+	    /* and redraw once more */
+	    update_screen(con);
+#endif
 	}
 	if (save) {
     	    q = (unsigned short *)(conp->vc_origin + conp->vc_size_row * old_rows);
 	    scr_memcpyw(q, save, logo_lines * nr_cols * 2);
+#ifdef CONFIG_PC9800
+	    scr_memcpyw((unsigned short *)((unsigned long)q
+					   + conp->vc_screenbuf_size),
+			(unsigned short *)((unsigned long)save
+					   + logo_lines * nr_cols * 2),
+			logo_lines * nr_cols * 2);
+#endif
 	    conp->vc_y += logo_lines;
     	    conp->vc_pos += logo_lines * conp->vc_size_row;
     	    kfree(save);
@@ -1030,10 +1082,18 @@ static void fbcon_redraw_softback(struct vc_data *conp, struct display *p, long 
     unsigned long n;
     int line = 0;
     int count = conp->vc_rows;
+#ifdef CONFIG_PC9800
+    int save_bufsiz = conp->vc_screenbuf_size;
+    int d_sb = 1;
+#endif
     
     d = (u16 *)softback_curr;
-    if (d == (u16 *)softback_in)
+    if (d == (u16 *)softback_in) {
 	d = (u16 *)conp->vc_origin;
+#ifdef CONFIG_PC9800
+	d_sb=0;
+#endif
+	}
     n = softback_curr + delta * conp->vc_size_row;
     softback_lines -= delta;
     if (delta < 0) {
@@ -1059,25 +1119,47 @@ static void fbcon_redraw_softback(struct vc_data *conp, struct display *p, long 
 	    softback_lines = 0;
 	}
     }
-    if (n == softback_curr)
+    if (n == softback_curr) {
+#ifdef CONFIG_PC9800
+	conp->vc_screenbuf_size = save_bufsiz;
+#endif
     	return;
+	}
     softback_curr = n;
     s = (u16 *)softback_curr;
-    if (s == (u16 *)softback_in)
+#ifdef CONFIG_PC9800
+    conp->vc_screenbuf_size = fbcon_softback_size;
+#endif
+    if (s == (u16 *)softback_in) {
 	s = (u16 *)conp->vc_origin;
+#ifdef CONFIG_PC9800
+	conp->vc_screenbuf_size = save_bufsiz;
+#endif
+	}
     while (count--) {
 	unsigned short *start;
 	unsigned short *le;
 	unsigned short c;
 	int x = 0;
 	unsigned short attr = 1;
+#ifdef CONFIG_PC9800
+	unsigned short ca;
+#endif
 
 	start = s;
 	le = advance_row(s, 1);
 	do {
 	    c = scr_readw(s);
+#ifdef CONFIG_PC9800
+	    ca= scr_readw((unsigned short *)((unsigned long)s+conp->vc_screenbuf_size));
+#endif
+#ifndef CONFIG_PC9800
 	    if (attr != (c & 0xff00)) {
 		attr = c & 0xff00;
+#else
+	    if (attr != ca) {
+		attr = ca;
+#endif
 		if (s > start) {
 		    p->dispsw->putcs(conp, p, start, s - start,
 				     real_y(p, line), x);
@@ -1085,7 +1167,15 @@ static void fbcon_redraw_softback(struct vc_data *conp, struct display *p, long 
 		    start = s;
 		}
 	    }
+#ifndef CONFIG_PC9800
 	    if (c == scr_readw(d)) {
+#else
+	    if (c == scr_readw(d)
+		&& ca == scr_readw((unsigned short *)
+				   ((unsigned long)d
+				    + (d_sb ? fbcon_softback_size
+				       : conp->vc_screenbuf_size)))) {
+#endif
 	    	if (s > start) {
 	    	    p->dispsw->putcs(conp, p, start, s - start,
 				     real_y(p, line), x);
@@ -1102,15 +1192,34 @@ static void fbcon_redraw_softback(struct vc_data *conp, struct display *p, long 
 	if (s > start)
 	    p->dispsw->putcs(conp, p, start, s - start, real_y(p, line), x);
 	line++;
-	if (d == (u16 *)softback_end)
+	if (d == (u16 *)softback_end) {
 	    d = (u16 *)softback_buf;
-	if (d == (u16 *)softback_in)
+#ifdef CONFIG_PC9800
+	    d_sb = 1;
+#endif
+	}
+	if (d == (u16 *)softback_in) {
 	    d = (u16 *)conp->vc_origin;
-	if (s == (u16 *)softback_end)
+#ifdef CONFIG_PC9800
+	    d_sb = 0;
+#endif
+	}
+	if (s == (u16 *)softback_end) {
 	    s = (u16 *)softback_buf;
-	if (s == (u16 *)softback_in)
+#ifdef CONFIG_PC9800
+	    conp->vc_screenbuf_size = fbcon_softback_size;
+#endif
+	}
+	if (s == (u16 *)softback_in) {
 	    s = (u16 *)conp->vc_origin;
+#ifdef CONFIG_PC9800
+	    conp->vc_screenbuf_size = save_bufsiz;
+#endif
     }
+    }
+#ifdef CONFIG_PC9800
+    conp->vc_screenbuf_size = save_bufsiz;
+#endif
 }
 
 static void fbcon_redraw(struct vc_data *conp, struct display *p, 
@@ -1126,11 +1235,23 @@ static void fbcon_redraw(struct vc_data *conp, struct display *p,
 	unsigned short c;
 	int x = 0;
 	unsigned short attr = 1;
+#ifdef CONFIG_PC9800
+	unsigned short ca;
+#endif
 
 	do {
 	    c = scr_readw(s);
+#ifdef CONFIG_PC9800
+	    ca = scr_readw((unsigned short *)((unsigned long)s
+					      + conp->vc_screenbuf_size));
+#endif
+#ifndef CONFIG_PC9800
 	    if (attr != (c & 0xff00)) {
 		attr = c & 0xff00;
+#else
+	    if (attr != ca) {
+		attr = ca;
+#endif
 		if (s > start) {
 		    p->dispsw->putcs(conp, p, start, s - start,
 				     real_y(p, line), x);
@@ -1138,7 +1259,14 @@ static void fbcon_redraw(struct vc_data *conp, struct display *p,
 		    start = s;
 		}
 	    }
+#ifndef CONFIG_PC9800
 	    if (c == scr_readw(d)) {
+#else
+	    if (c == scr_readw(d)
+		&& ca == scr_readw((unsigned short *)
+				   ((unsigned long)d
+				    + conp->vc_screenbuf_size))) {
+#endif
 	    	if (s > start) {
 	    	    p->dispsw->putcs(conp, p, start, s - start,
 				     real_y(p, line), x);
@@ -1150,6 +1278,10 @@ static void fbcon_redraw(struct vc_data *conp, struct display *p,
 	    	}
 	    }
 	    scr_writew(c, d);
+#ifdef CONFIG_PC9800
+	    scr_writew(ca, (unsigned short *)((unsigned long)d
+					      + conp->vc_screenbuf_size));
+#endif
 	    s++;
 	    d++;
 	} while (s < le);
@@ -1225,18 +1357,37 @@ void fbcon_redraw_bmove(struct display *p, int sy, int sx, int dy, int dx, int h
 	unsigned short c;
 	int x = dx;
 	unsigned short attr = 1;
+#ifdef CONFIG_PC9800
+	unsigned short ca;
+#endif
 
 	do {
 	    c = scr_readw(d);
+#ifdef CONFIG_PC9800
+	    ca = scr_readw((unsigned short *)((unsigned long)s
+					      + conp->vc_screenbuf_size));
+#endif
+#ifndef CONFIG_PC9800
 	    if (attr != (c & 0xff00)) {
 		attr = c & 0xff00;
+#else
+	    if (attr != ca) {
+		attr = ca;
+#endif
 		if (d > start) {
 		    p->dispsw->putcs(conp, p, start, d - start, dy, x);
 		    x += d - start;
 		    start = d;
 		}
 	    }
+#ifndef CONFIG_PC9800
 	    if (s >= ls && s < le && c == scr_readw(s)) {
+#else
+	    if (s >= ls && s < le && c == scr_readw(s)
+		&& ca == scr_readw((unsigned short *)
+				   ((unsigned long)d
+				    + conp->vc_screenbuf_size))) {
+#endif
 		if (d > start) {
 		    p->dispsw->putcs(conp, p, start, d - start, dy, x);
 		    x += d - start + 1;
@@ -1266,6 +1417,11 @@ static inline void fbcon_softback_note(struct vc_data *conp, int t, int count)
 
     while (count) {
     	scr_memcpyw((u16 *)softback_in, p, conp->vc_size_row);
+#ifdef CONFIG_PC9800
+	scr_memcpyw((u16 *)((unsigned long)softback_in+fbcon_softback_size),
+		    (u16 *)((unsigned long)p+ conp->vc_screenbuf_size),
+		    conp->vc_size_row);
+#endif
     	count--;
     	p = advance_row(p, 1);
     	softback_in += conp->vc_size_row;
@@ -1361,6 +1517,14 @@ static int fbcon_scroll(struct vc_data *conp, int t, int b, int dir,
 		    	    conp->vc_size_row * (b-count)), 
 		    	    conp->vc_video_erase_char,
 		    	    conp->vc_size_row * count);
+#ifdef CONFIG_PC9800
+		scr_memsetw((unsigned short *)((unsigned long)conp->vc_origin
+					       + conp->vc_screenbuf_size
+					       + (conp->vc_size_row
+						  * (b - count))),
+			    conp->vc_video_erase_attr,
+			    conp->vc_size_row * count);
+#endif
 		return 1;
 	    }
 	    break;
@@ -1421,6 +1585,13 @@ static int fbcon_scroll(struct vc_data *conp, int t, int b, int dir,
 	    		    conp->vc_size_row * t), 
 	    		    conp->vc_video_erase_char,
 	    		    conp->vc_size_row * count);
+#ifdef CONFIG_PC9800
+		scr_memsetw((unsigned short *)((unsigned long)conp->vc_origin
+					       + conp->vc_screenbuf_size
+					       + conp->vc_size_row * t),
+			    conp->vc_video_erase_attr,
+			    conp->vc_size_row * count);
+#endif
 	    	return 1;
 	    }
     }
@@ -2055,6 +2226,13 @@ static int fbcon_scrolldelta(struct vc_data *conp, int lines)
     		    	p -= conp->vc_size_row;
     		    	q -= conp->vc_size_row;
     		    	scr_memcpyw((u16 *)q, (u16 *)p, conp->vc_size_row);
+#ifdef CONFIG_PC9800
+			scr_memcpyw((u16 *)((unsigned long)q
+					    + conp->vc_screenbuf_size),
+				    (u16 *)((unsigned long)p
+					    + fbcon_softback_size),
+				    conp->vc_size_row);
+#endif
     		    }
     		    softback_in = p;
     		    update_region(unit, conp->vc_origin, logo_lines * conp->vc_cols);
@@ -2399,6 +2577,7 @@ static int __init fbcon_show_logo( void )
 	}
 #endif
 #if defined(CONFIG_FBCON_VGA_PLANES)
+#ifndef CONFIG_PC9800
 	if (depth == 4 && p->type == FB_TYPE_VGA_PLANES) {
 		outb_p(1,0x3ce); outb_p(0xf,0x3cf);
 		outb_p(3,0x3ce); outb_p(0,0x3cf);
@@ -2429,6 +2608,219 @@ static int __init fbcon_show_logo( void )
 		done = 1;
 	}
 #endif			
+#endif
+#if defined(CONFIG_PC9800)
+	if (depth == 4 && p->type == FB_TYPE_VGA_PLANES) {
+		/*
+		 * for GRCG framebuffers (EGC not required)
+		 */
+		u8 pldata[4],cpudata,data;
+		int hi_lo=0,ti;
+#if 1
+#if 0
+		/* mono-bmp */
+		static u16 egcfblogo[144]={
+		0x0000,0x0000,0x0000,0x0000,0x0000,
+		0x0000,0x0000,0x0000,0x0000,
+		0x0000,0x0000,0x0000,0x0000,0x0000,
+		0x0000,0x0000,0x0000,0x0000,
+		0xF003,0x0000,0x0000,0x0000,0x0000,
+		0x0000,0x0000,0x0000,0x0000,
+		0x0C0C,0x0000,0x0000,0x0000,0x0000,
+		0x0000,0x0000,0x0000,0x0000,
+		0x2211,0xF101,0xC1C1,0xC3F7,0x0080,
+		0x0000,0x0041,0x0500,0x00C7,
+		0x2121,0x0201,0x2122,0x2404,0x0040,
+		0x0000,0x0040,0x0600,0x8028,
+		0x2041,0x0481,0x0114,0x2804,0x780E,
+		0xF01C,0x7941,0x4A14,0x8028,
+		0x2041,0xF481,0x0104,0xE8E7,0x4411,
+		0x8822,0x4541,0x8A12,0x0027,
+		0x0040,0x0481,0x0174,0x2804,0x4411,
+		0x8822,0x4541,0x0911,0x80E8,
+		0x0040,0x0481,0x0114,0x2804,0x4411,
+		0x8822,0x4541,0x0811,0x8028,
+		0x0120,0x0201,0x2122,0x2404,0x4451,
+		0x8822,0x4541,0x9232,0x8028,
+		0x0210,0xF101,0xC1C1,0xC307,0x448E,
+		0x881C,0x447D,0x51D4,0x00C7,
+		0x0C0C,0x0000,0x0000,0x0000,0x0000,
+		0x0000,0x0000,0x0000,0x0000,
+		0xF003,0x0000,0x0000,0x0000,0x0000,
+		0x0000,0x0000,0x0000,0x0000,
+		0x0000,0x0000,0x0000,0x0000,0x0000,
+		0x0000,0x0000,0x0000,0x0000,
+		0x0000,0x0000,0x0000,0x0000,0x0000,
+		0x0000,0x0000,0x0000,0x0000,};
+#endif
+		static unsigned short kmc_logo_data[] __initlocaldata ={
+			0x0000,0x0000,0x8007,0x0000,0x0000,0x0000,
+			0x0000,0x0000,0x0000,0x0000,0x0000,
+			0x0000,0x0000,0x800F,0x0000,0x0000,0x0000,
+			0x0000,0x0000,0x0000,0x0000,0x0000,
+			0x0000,0x0000,0x800F,0x0000,0x0000,0x0000,
+			0x0000,0x0000,0x0000,0x0000,0x0000,
+			0x0000,0x3800,0x801F,0x0000,0x0000,0xC000,
+			0x0000,0x0000,0x0200,0x0000,0x0000,
+			0x0000,0x7800,0x803F,0x0000,0xF00F,0xC000,
+			0x0000,0x0000,0x0400,0x000F,0x003E,
+			0x0000,0xF800,0x803F,0x0000,0x8001,0x0000,
+			0x0000,0x0000,0x0400,0xC031,0x00C3,
+			0x0000,0xF800,0x807F,0x0000,0x8001,0x0000,
+			0x0000,0x0000,0x0400,0x4160,0x8081,
+			0x0000,0xF801,0x80FF,0x0000,0x8001,0x0000,
+			0x0000,0x0000,0x0800,0x6140,0x8081,
+			0x0000,0xF903,0x80FF,0x0000,0x8001,0x0000,
+			0x0000,0x0000,0x0800,0x31C0,0x8081,
+			0x0000,0xF903,0x80FF,0x0000,0x8001,0x0000,
+			0x0000,0x0000,0x0800,0x31C0,0x00C1,
+			0x0000,0xFB07,0x80F7,0x0000,0x8001,0xC100,
+			0x1E8E,0x7C1E,0x107C,0x30C0,0x00E3,
+			0x0000,0xFF0F,0xC0F7,0x0000,0x8001,0xC703,
+			0x06BF,0x1806,0x1030,0x30C0,0x0074,
+			0x1EFE,0xBF0F,0xF0E7,0xFE03,0x8001,0xC100,
+			0x86E3,0x0C06,0x1020,0x30E0,0x0038,
+			0x1CFE,0x3F1F,0xE0C7,0xFE01,0x8001,0xC100,
+			0x8681,0x0E06,0x2040,0x3060,0x003C,
+			0x1CFE,0x3F3E,0xE087,0xFE00,0x8001,0xC100,
+			0x8681,0x0606,0x2080,0x7030,0x004E,
+			0x18FE,0x3F3E,0xC187,0xFEE3,0x8001,0xC100,
+			0x8681,0x0306,0x2080,0xA01F,0x00C7,
+			0x10FE,0x3F7C,0xC307,0xFEFF,0x8001,0xC100,
+			0x8681,0x0106,0x4080,0x6100,0x8083,
+			0x10FE,0x00F8,0xC307,0xFEFF,0x8001,0xC100,
+			0x8681,0x0206,0x40C0,0xC100,0x8081,
+			0x00FE,0x00F8,0x8307,0xFEFF,0x8001,0xC110,
+			0x8681,0x0406,0x4060,0x8100,0x8081,
+			0x00FE,0x00F0,0x8307,0xFEFF,0x8001,0xC120,
+			0x8681,0x0806,0x8070,0x8101,0x8081,
+			0x10FE,0x0060,0xC307,0xFEFF,0x8001,0xC120,
+			0x8781,0x101E,0x8038,0x0006,0x00C1,
+			0x18FE,0x0040,0xC107,0xFEF3,0x8001,0xC1E0,
+			0x8381,0xB0F7,0x801C,0x001C,0x00C3,
+			0x18FE,0x0000,0xC007,0xFE01,0xFF0F,0xF7C3,
+			0xE1E7,0x78C6,0x007F,0x00F0,0x003C,
+			0x1CFE,0x0000,0xE007,0xFE01,0x0000,0x0000,
+			0x0000,0x0000,0x0000,0x0000,0x0000,
+			0x1EFE,0x0000,0xF007,0xFE01,0x0000,0x0000,
+			0x0000,0x0000,0x0000,0x0000,0x0000,
+			0x1EFE,0x0000,0xFC07,0xFE07,0x0000,0x0000,
+			0x0000,0x0000,0x0000,0x0000,0x0000,
+			0x0000,0x0000,0x0000,0x0000,0x0000,0x0000,
+			0x0000,0x0000,0x0000,0x0000,0x0000,
+			0x1CE0,0x8001,0x0F08,0xE000,0x0038,0x1C00,
+			0x8007,0x0CE0,0x8003,0x0848,0x8008,
+			0x1290,0x4002,0x0808,0x0001,0x0010,0x2000,
+			0x0004,0x1290,0x4002,0x0848,0x800D,
+			0x1CE0,0x4002,0x0E08,0x0001,0x0010,0x1800,
+			0x0007,0x1EE0,0x8003,0x0878,0x800A,
+			0x1280,0x4002,0x0848,0x0001,0x0010,0x0400,
+			0x0004,0x1290,0x0002,0x0848,0x8008,
+			0x1280,0x8001,0x0F30,0xE000,0x0010,0x3800,
+			0x8007,0x1290,0x0002,0x0848,0x8008
+		};
+
+#endif
+		/* setup ; GRCG ON */
+		outb(0xc0,0x7c);
+#if 1
+		/* Logo test :-) */
+		if ( x == 0 ) {
+			int lg_start_x;
+			int lg_wd_x;
+			/* clearing by pal no.0 */
+			outb(0x00,0x7e);
+			outb(0x00,0x7e);
+			outb(0x00,0x7e);
+			outb(0x00,0x7e);
+			for(y1 = 0; y1 < LOGO_H ; y1++) {
+				for(x1 = 0; x1 < 40 ; x1 ++) {
+				dst = fb + y1 * line + x1*2 ;
+				*((u16 *)dst) = 0xffff;
+				}
+			}
+			/* draw Linux/98 */
+			lg_start_x=smp_num_cpus * (LOGO_W + 8) - 8;
+			lg_wd_x=(lg_start_x+15)>>4;
+			if(lg_wd_x + 11 <= 40 && LOGO_H >= 32) {
+				int ptr=((40-lg_wd_x) + lg_wd_x * 2 - 11) / 2;
+				outb(0xff,0x7e);
+				outb(0xff,0x7e);
+				outb(0xff,0x7e);
+				outb(0xff,0x7e);
+				for(y1 = 0; y1 < 32 ; y1++) {
+					for(x1 = 0; x1 < 11 ; x1 ++) {
+					dst = fb + (y1+(LOGO_H>>1)-16) * 
+					      line + ((x1+ptr)*2) ;
+					*((u16 *)dst) = kmc_logo_data[y1*11+x1];
+					}
+				}
+			}
+#if 0
+			/* draw egc logo */
+			if( LOGO_H >=16 && lg_wd_x + 9 <=40) {
+				outb(0xff,0x7e);
+				outb(0xff,0x7e);
+				outb(0x00,0x7e);
+				outb(0x00,0x7e);
+				for(y1 = 0; y1 < 16 ; y1++) {
+					for(x1 = 0; x1 < 9 ; x1 ++) {
+					dst = fb + (y1) * 
+					      line + (line - 18 + x1*2) ;
+					*((u16 *)dst) = egcfblogo[y1*9+x1];
+					}
+				}
+			}
+#endif
+		}
+#endif
+		/* Drawing Penguins... */
+		src = logo;
+		for (y1 = 0; y1 < LOGO_H; y1++) {
+			/* data stack */
+			cpudata = 0;
+			for ( ti = 0 ; ti < 4 ; ti ++ )
+				pldata[ti] = 0;
+			for (x1 = 0; x1 < LOGO_W ; x1++) {
+				/* read data */
+				if(!hi_lo) {
+					data = *src >> 4;
+					hi_lo=1;
+				} else {
+					data = *src & 0xf;
+					src++;
+					hi_lo=0;
+				}
+				cpudata |= 1<<(7-((x1+x)&7));
+				for ( ti = 0 ; ti < 4 ; ti ++ )
+					pldata[ti] |=
+					((data&(1<<ti))?(1):(0))<<(7-((x1+x)&7));
+				if (((x1+x)&7)==7 && cpudata) {
+					for ( ti = 0 ; ti < 4 ; ti ++ )
+						{
+						outb(pldata[ti],0x7e);
+						pldata[ti]=0;
+						}
+					dst = fb+y1*line + ((x1+x)>>3);
+					*((char *)dst) = cpudata;
+					cpudata=0;
+				}
+				/* end */
+			}
+		/* send last data */
+		       if (cpudata) {
+				for ( ti = 0 ; ti < 4 ; ti ++ )
+					outb(pldata[ti],0x7e);
+				dst = fb + y1*line + ((x1+x)>>3);
+				*dst = cpudata;
+				cpudata=0;
+			}
+		}
+	/* GRCG OFF */
+	outb(0x00,0x7c);
+	done = 1;
+	}
+#endif
     }
     
     if (p->fb_info->fbops->fb_rasterimg)
@@ -2439,6 +2831,41 @@ static int __init fbcon_show_logo( void )
 
     return done ? (LOGO_H + fontheight(p) - 1) / fontheight(p) : 0 ;
 }
+
+#ifdef CONFIG_PC9800
+static u8 fbcon_attr_at(struct vc_data *con,u8 _color, u8 _intensity,
+			u8 _blink, u8 _underline, u8 _reverse)
+{
+#if 0
+	u8 a = _color;
+	if (_underline)
+		a = (a & 0xf0) | 0x0f;
+	else if (_intensity == 0)
+		a = (a & 0xf0) | 0x08;
+	if (_reverse)
+		a = ((a) & 0x88) | ((((a) >> 4) | ((a) << 4)) & 0x77);
+	if (_blink)
+		a ^= 0x80;
+	if (_intensity == 2)
+		a ^= 0x08;
+	return a;
+#else
+	u8 clr = _color;
+	con->vc_pc98_addbuf = 0;
+	if (_intensity > 0)
+		clr |= 0x08;
+	if (_intensity > 1)
+		con->vc_pc98_addbuf |= 0x01; /* bold */
+	if (_underline)
+		con->vc_pc98_addbuf |= 0x02; /* underline */
+	if (_blink)
+		clr |= 0x80;
+	if (_reverse)
+		clr = ((clr << 4) & 0xf0) | ((clr >> 4) & 0x0f);
+	return clr;
+#endif
+}
+#endif
 
 /*
  *  The console `switch' structure for the frame buffer based console
@@ -2460,6 +2887,9 @@ const struct consw fb_con = {
     con_set_palette: 	fbcon_set_palette,
     con_scrolldelta: 	fbcon_scrolldelta,
     con_set_origin: 	fbcon_set_origin,
+#ifdef CONFIG_PC9800
+    con_build_attr:	fbcon_attr_at,
+#endif
     con_invert_region:	fbcon_invert_region,
     con_screen_pos:	fbcon_screen_pos,
     con_getxy:		fbcon_getxy,

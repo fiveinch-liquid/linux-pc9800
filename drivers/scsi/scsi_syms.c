@@ -91,6 +91,10 @@ EXPORT_SYMBOL(scsi_hosts);
 EXPORT_SYMBOL(scsi_devicelist);
 EXPORT_SYMBOL(scsi_device_types);
 
+#ifdef CONFIG_PC9800
+EXPORT_SYMBOL(pc9800_scsi_bios_param);
+#endif
+
 /*
  * Externalize timers so that HBAs can safely start/restart commands.
  */

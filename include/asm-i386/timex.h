@@ -9,7 +9,14 @@
 #include <linux/config.h>
 #include <asm/msr.h>
 
+#include <linux/config.h>
+
+#ifdef CONFIG_PC9800
+extern int CLOCK_TICK_RATE;
+#else
 #define CLOCK_TICK_RATE	1193180 /* Underlying HZ */
+#endif
+
 #define CLOCK_TICK_FACTOR	20	/* Factor of both 1000000 and CLOCK_TICK_RATE */
 #define FINETUNE ((((((long)LATCH * HZ - CLOCK_TICK_RATE) << SHIFT_HZ) * \
 	(1000000/CLOCK_TICK_FACTOR) / (CLOCK_TICK_RATE/CLOCK_TICK_FACTOR)) \

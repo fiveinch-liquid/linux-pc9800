@@ -9,9 +9,16 @@
  * High loaded stuff by Hans Lermen & Werner Almesberger, Feb. 1996
  */
 
+#include <linux/config.h>
 #include <linux/vmalloc.h>
 #include <linux/tty.h>
 #include <asm/io.h>
+#ifdef CONFIG_PC9800
+#ifdef STANDARD_MEMORY_BIOS_CALL
+#undef STANDARD_MEMORY_BIOS_CALL
+#endif
+#endif
+
 /*
  * gzip declarations
  */
@@ -110,7 +117,11 @@ static unsigned int low_buffer_end, low_buffer_size;
 static int high_loaded =0;
 static uch *high_buffer_start /* = (uch *)(((ulg)&end) + HEAP_SIZE)*/;
 
+#ifdef CONFIG_PC9800
+static char *vidmem = (char *)0xa0000;
+#else
 static char *vidmem = (char *)0xb8000;
+#endif
 static int vidport;
 static int lines, cols;
 
@@ -187,11 +198,19 @@ static void puts(const char *s)
 	SCREEN_INFO.orig_x = x;
 	SCREEN_INFO.orig_y = y;
 
+#ifdef CONFIG_PC9800
+	pos = x + cols * y;	/* Update cursor position */
+	while(!(inb_p(0x60)&4));
+	outb_p(0x49,0x62);
+	outb_p(pos&0xff,0x60);
+	outb_p((pos>>8)&0xff,0x60);
+#else /* !CONFIG_PC9800 */
 	pos = (x + cols * y) * 2;	/* Update cursor position */
 	outb_p(14, vidport);
 	outb_p(0xff & (pos >> 9), vidport+1);
 	outb_p(15, vidport);
 	outb_p(0xff & (pos >> 1), vidport+1);
+#endif
 }
 
 void* memset(void* s, int c, size_t n)
@@ -346,6 +365,9 @@ int decompress_kernel(struct moveparams *mv, void *rmode)
 {
 	real_mode = rmode;
 
+#ifdef CONFIG_PC9800
+	vidmem = (char *)(((unsigned int)SCREEN_INFO.orig_video_page)<<4);
+#else
 	if (SCREEN_INFO.orig_video_mode == 7) {
 		vidmem = (char *) 0xb0000;
 		vidport = 0x3b4;
@@ -353,6 +375,7 @@ int decompress_kernel(struct moveparams *mv, void *rmode)
 		vidmem = (char *) 0xb8000;
 		vidport = 0x3d4;
 	}
+#endif /* CONFIG_PC9800 */
 
 	lines = SCREEN_INFO.orig_video_lines;
 	cols = SCREEN_INFO.orig_video_cols;

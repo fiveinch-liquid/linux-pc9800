@@ -206,8 +206,13 @@ static void __init MP_bus_info (struct mpc_config_bus *m)
 		mp_bus_id_to_type[m->mpc_busid] = MP_BUS_PCI;
 		mp_bus_id_to_pci_bus[m->mpc_busid] = mp_current_pci_id;
 		mp_current_pci_id++;
+#ifndef CONFIG_PC9800
 	} else if (strncmp(str, BUSTYPE_MCA, sizeof(BUSTYPE_MCA)-1) == 0) {
 		mp_bus_id_to_type[m->mpc_busid] = MP_BUS_MCA;
+#else
+	} else if (strncmp(str, BUSTYPE_NEC98, sizeof(BUSTYPE_NEC98)-1) == 0) {
+		mp_bus_id_to_type[m->mpc_busid] = MP_BUS_NEC98;
+#endif
 	} else {
 		printk("Unknown bustype %s - ignoring\n", str);
 	}
@@ -508,7 +513,17 @@ void __init get_smp_config (void)
 		 * Read the physical hardware table.  Anything here will
 		 * override the defaults.
 		 */
+#ifndef CONFIG_PC9800
 		smp_read_mpc((void *)mpf->mpf_physptr);
+#else
+		smp_read_mpc(phys_to_virt(mpf->mpf_physptr));
+# if 0 /* old code */
+		{
+			extern char mpc_table[];
+			smp_read_mpc((void *)mpc_table);
+		}
+# endif
+#endif
 
 		/*
 		 * If there are no explicit MP IRQ entries, then we are
@@ -558,8 +573,30 @@ static int __init smp_scan_config (unsigned long base, unsigned long length)
 			printk("found SMP MP-table at %08lx\n",
 						virt_to_phys(mpf));
 			reserve_bootmem(virt_to_phys(mpf), PAGE_SIZE);
+#ifndef CONFIG_PC9800
 			if (mpf->mpf_physptr)
 				reserve_bootmem(mpf->mpf_physptr, PAGE_SIZE);
+#else
+			/*
+			 * PC-9800's MPC table places on the very last of
+			 * physical memory; so that simply reserving PAGE_SIZE
+			 * from mpg->mpf_physptr yields BUG() in
+			 * reserve_bootmem.
+			 */
+			if (mpf->mpf_physptr) {
+				/*
+				 * We cannot access to MPC table to compute
+				 * table size yet, as only few megabytes from
+				 * the bottom is mapped now.
+				 */
+				unsigned long size = PAGE_SIZE;
+				unsigned long end = max_low_pfn * PAGE_SIZE;
+				if (mpf->mpf_physptr + size > end)
+					size = end - mpf->mpf_physptr;
+				reserve_bootmem(mpf->mpf_physptr, size);
+			}
+#endif
+
 			mpf_found = mpf;
 			return 1;
 		}
@@ -571,7 +608,9 @@ static int __init smp_scan_config (unsigned long base, unsigned long length)
 
 void __init find_intel_smp (void)
 {
+#ifndef CONFIG_PC9800
 	unsigned int address;
+#endif
 
 	/*
 	 * FIXME: Linux assumes you have 640K of base ram..
@@ -585,6 +624,7 @@ void __init find_intel_smp (void)
 		smp_scan_config(639*0x400,0x400) ||
 			smp_scan_config(0xF0000,0x10000))
 		return;
+#ifndef CONFIG_PC9800	/* PC-9800 has no EBDA area? */
 	/*
 	 * If it is an SMP machine we should know now, unless the
 	 * configuration is in an EISA/MCA bus machine with an
@@ -605,6 +645,7 @@ void __init find_intel_smp (void)
 	smp_scan_config(address, 0x1000);
 	if (smp_found_config)
 		printk(KERN_WARNING "WARNING: MP table in the EBDA can be UNSAFE, contact linux-smp@vger.kernel.org if you experience SMP problems!\n");
+#endif
 }
 
 #else

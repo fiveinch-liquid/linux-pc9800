@@ -44,6 +44,10 @@
 			- Avoid bogus detect of 3c590's (Andrzej Krzysztofowicz)
 			- Reviewed against 1.18 from scyld.com
 */
+/*
+  FIXES for PC-9800:
+  Shu Iwanaga: 3c569B(PC-9801 C-bus) support
+*/
 
 /* A few values that may be tweaked. */
 
@@ -74,6 +78,10 @@ static int max_interrupt_work = 10;
 #include <asm/bitops.h>
 #include <asm/io.h>
 #include <asm/irq.h>
+
+#ifdef CONFIG_PC98 /* backward compatibility */
+#define CONFIG_PC9800
+#endif
 
 static char versionA[] __initdata = "3c509.c:1.18 12Mar2001 becker@scyld.com\n";
 static char versionB[] __initdata = "http://www.scyld.com/network/3c509.html\n";
@@ -144,11 +152,17 @@ struct el3_private {
 	struct sk_buff *queue[SKB_QUEUE_SIZE];
 	char mca_slot;
 };
+#ifdef CONFIG_PC9800
+static int id_port __initdata = 0x71d0;
+#else
 static int id_port __initdata = 0x110;	/* Start with 0x110 to avoid new sound cards.*/
+#endif
 static struct net_device *el3_root_dev;
 
 static ushort id_read_eeprom(int index);
+#ifndef CONFIG_PC9800
 static ushort read_eeprom(int ioaddr, int index);
+#endif
 static int el3_open(struct net_device *dev);
 static int el3_start_xmit(struct sk_buff *skb, struct net_device *dev);
 static void el3_interrupt(int irq, void *dev_id, struct pt_regs *regs);
@@ -221,6 +235,7 @@ int __init el3_probe(struct net_device *dev)
 
 	if (dev) SET_MODULE_OWNER(dev);
 
+#ifndef CONFIG_PC9800 /* PC-9800 never have EISA bus */
 	/* First check all slots of the EISA bus.  The next slot address to
 	   probe is kept in 'eisa_addr' to support multiple probe() calls. */
 	if (EISA_bus) {
@@ -256,6 +271,7 @@ int __init el3_probe(struct net_device *dev)
 			goto found;
 		}
 	}
+#endif /* CONFIG_PC9800 : PC-9800 never have EISA bus */
 
 #ifdef CONFIG_MCA
 	/* Based on Erik Nygren's (nygren@mit.edu) 3c529 patch, heavily
@@ -320,6 +336,7 @@ int __init el3_probe(struct net_device *dev)
 		return -ENODEV;
 	}
 #endif /* CONFIG_MCA */
+#ifndef CONFIG_PC9800 /* ISA PnP is not supported yet ... */
 
 #if defined(CONFIG_ISAPNP) || defined(CONFIG_ISAPNP_MODULE)
 	if (nopnp == 1)
@@ -377,6 +394,7 @@ no_pnp:
 	   ID_PORT.  We find cards past the first by setting the 'current_tag'
 	   on cards as they are found.  Cards with their tag set will not
 	   respond to subsequent ID sequences. */
+#endif /* CONFIG_PC9800 : ISA PnP is not supported yet ... */
 
 	outb(0x00, id_port);
 	outb(0x00, id_port);
@@ -428,7 +446,11 @@ no_pnp:
 	{
 		unsigned int iobase = id_read_eeprom(8);
 		if_port = iobase >> 14;
+#ifndef CONFIG_PC9800
 		ioaddr = 0x200 + ((iobase & 0x1f) << 4);
+#else
+		ioaddr = 0x40d0 + ((iobase & 0x1f) << 8);
+#endif
 	}
 	irq = id_read_eeprom(9) >> 12;
 
@@ -445,6 +467,14 @@ no_pnp:
 		}
 	}
 
+#ifdef CONFIG_PC9800
+	if(irq==7){
+		irq = 6;
+	}else if(irq==15){
+		irq = 13;
+	}
+#endif
+
 	if (!request_region(ioaddr, EL3_IO_EXTENT, "3c509"))
 		return -EBUSY;
 
@@ -452,7 +482,11 @@ no_pnp:
 	outb(0xd0 + ++current_tag, id_port);
 
 	/* Activate the adaptor at the EEPROM location. */
+#ifndef CONFIG_PC9800
 	outb((ioaddr >> 4) | 0xe0, id_port);
+#else
+	outb((ioaddr >> 8) | 0xe0, id_port);
+#endif
 
 	EL3WINDOW(0);
 	if (inw(ioaddr) != 0x6d50) {
@@ -462,7 +496,9 @@ no_pnp:
 
 	/* Free the interrupt so that some other card can use it. */
 	outw(0x0f00, ioaddr + WN0_IRQ);
+#if !defined(CONFIG_PC9800) || defined(CONFIG_MCA)
  found:
+#endif
 	if (dev == NULL) {
 		dev = init_etherdev(dev, sizeof(struct el3_private));
 		if (dev == NULL) {
@@ -517,6 +553,7 @@ no_pnp:
 	return 0;
 }
 
+#ifndef CONFIG_PC9800 /* not used */
 /* Read a word from the EEPROM using the regular EEPROM access register.
    Assume that we are in register window zero.
  */
@@ -527,6 +564,7 @@ static ushort __init read_eeprom(int ioaddr, int index)
 	udelay (500);
 	return inw(ioaddr + 12);
 }
+#endif /* CONFIG_PC9800 : not used */
 
 /* Read a word from the EEPROM when in the ISA ID probe state. */
 static ushort __init id_read_eeprom(int index)
@@ -572,7 +610,20 @@ el3_open(struct net_device *dev)
 	outw(0x0001, ioaddr + 4);
 
 	/* Set the IRQ line. */
+#ifdef CONFIG_PC9800
+	switch(dev->irq){
+	case 6:
+		outw(0x7000|0x0f00,ioaddr+WN0_IRQ);
+		break;
+	case 13:
+		outw(0xf000|0x0f00,ioaddr+WN0_IRQ);
+		break;
+	default:
+#endif
 	outw((dev->irq << 12) | 0x0f00, ioaddr + WN0_IRQ);
+#ifdef CONFIG_PC9800
+	}
+#endif
 
 	/* Set the station address in window 2 each time opened. */
 	EL3WINDOW(2);

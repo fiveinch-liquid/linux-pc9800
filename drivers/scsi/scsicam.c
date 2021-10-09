@@ -13,6 +13,8 @@
 #define __NO_VERSION__
 #include <linux/module.h>
 
+#include <linux/config.h>
+
 #include <linux/fs.h>
 #include <linux/genhd.h>
 #include <linux/kernel.h>
@@ -51,6 +53,11 @@ int scsicam_bios_param(Disk * disk,	/* SCSI disk */
 	int mi = (MINOR(dev) & ~0xf);
 
 	int block = 1024; 
+
+#ifdef CONFIG_PC9800
+	if (!pc9800_scsi_bios_param(disk, dev, ip))
+		return 0;
+#endif
 
 	if(blksize_size[ma])
 		block = blksize_size[ma][mi];
@@ -231,3 +238,83 @@ static int setsize(unsigned long capacity, unsigned int *cyls, unsigned int *hds
 	*hds = (unsigned int) heads;
 	return (rv);
 }
+
+#ifdef CONFIG_PC9800
+
+#include <asm/pc9800.h>
+
+/* XXX - For now, we assume the first (i.e. having the least host_no)
+   real (i.e. non-emulated) host adapter shall be BIOS-controlled one.
+   We *SHOULD* invent another way.  */
+
+static inline struct Scsi_Host *first_real_host (void)
+{
+	struct Scsi_Host *first, *h;
+
+	for (first = NULL, h = scsi_hostlist; h; h = h->next)
+		if (!h->hostt->emulated
+		    && (!first || h->host_no < first->host_no))
+			first = h;
+	return first;
+}
+
+/* There is no standard device-to-name translation function. Sigh.  */
+static inline void sd_devname (char *buf, kdev_t dev)
+{
+	int diskno = (MAJOR (dev) & SD_MAJOR_MASK) * 16 + (MINOR (dev) >> 4);
+
+	buf[0] = 'a' + diskno;
+	buf[1] = '\0';
+	if (diskno >= 26) {
+		buf[0] = 'a' + (diskno / 26 - 1);
+		buf[1] = 'a' + (diskno % 26);
+		buf[2] = '\0';
+	}
+}
+
+int pc9800_scsi_bios_param(Disk *disk, kdev_t dev, int *ip)
+{
+	char namebuf[4];
+
+	sd_devname (namebuf, dev);
+
+	if (first_real_host () == disk->device->host
+	    && disk->device->id < 7
+	    && __PC9800SCA_TEST_BIT (PC9800SCA_DISK_EQUIPS, disk->device->id))
+	{
+		const u8 *p = (&__PC9800SCA (u8, PC9800SCA_SCSI_PARAMS)
+			       + disk->device->id * 4);
+
+		ip[0] = p[1];	/* # of heads */
+		ip[1] = p[0];	/* # of sectors/track */
+		ip[2] = *(u16 *)&p[2] & 0x0FFF;	/* # of cylinders */
+		if (p[3] & (1 << 6)) { /* #-of-cylinders is 16-bit */
+			ip[2] |= (ip[0] & 0xF0) << 8;
+			ip[0] &= 0x0F;
+		}
+		printk (KERN_INFO "sd%s: "
+			"BIOS parameters CHS:%d/%d/%d, %u bytes %s sector\n",
+			namebuf, ip[2], ip[0], ip[1], 256 << ((p[3] >> 4) & 3),
+			p[3] & 0x80 ? "hard" : "soft");
+		return 0;
+	}
+
+	/* Assume PC-9801-92 compatible parameters for HAs without BIOS.  */
+	ip[0] = 8;
+	ip[1] = 32;
+	ip[2] = disk->capacity / (8 * 32);
+	if (ip[2] > 65535) {	/* if capacity >= 8GB */
+		/* Recent on-board adapters seem to use this parameter.  */
+		ip[1] = 128;
+		ip[2] = disk->capacity / (8 * 128);
+		if (ip[2] > 65535) { /* if capacity >= 32GB  */
+			/* Clip the number of cylinders.  Currently this
+			   is the limit that we deal with.  */
+			ip[2] = 65535;
+		}
+	}
+	printk (KERN_INFO "sd%s: BIOS parameters CHS:%d/%d/%d (assumed)\n",
+		namebuf, ip[2], ip[0], ip[1]);
+	return 0;
+}
+#endif /* CONFIG_PC9800 */

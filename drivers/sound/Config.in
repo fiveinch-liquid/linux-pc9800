@@ -147,6 +147,9 @@ if [ "$CONFIG_SOUND_OSS" = "y" -o "$CONFIG_SOUND_OSS" = "m" ]; then
 
    dep_tristate '    100% Sound Blaster compatibles (SB16/32/64, ESS, Jazz16) support' CONFIG_SOUND_SB $CONFIG_SOUND_OSS
    dep_tristate '    AWE32 synth' CONFIG_SOUND_AWE32_SYNTH $CONFIG_SOUND_OSS
+   if [ "$CONFIG_PC9800" = "y" -a "$CONFIG_SOUND_SB" != "n" ]; then
+ 	define_bool CONFIG_SB16_PC9800 y
+   fi
    dep_tristate '    Full support for Turtle Beach WaveFront (Tropez Plus, Tropez, Maui) synth/soundcards' CONFIG_SOUND_WAVEFRONT $CONFIG_SOUND_OSS m
    dep_tristate '    Limited support for Turtle Beach Wave Front (Maui, Tropez) synthesizers' CONFIG_SOUND_MAUI $CONFIG_SOUND_OSS
    if [ "$CONFIG_SOUND_MAUI" = "y" ]; then
@@ -157,6 +160,9 @@ if [ "$CONFIG_SOUND_OSS" = "y" -o "$CONFIG_SOUND_OSS" = "m" ]; then
    fi
 
    dep_tristate '    Yamaha FM synthesizer (YM3812/OPL-3) support' CONFIG_SOUND_YM3812 $CONFIG_SOUND_OSS
+   if [ "$CONFIG_PC9800" = "y" -a "$CONFIG_SOUND_YM3812" != "n" ]; then
+       define_bool CONFIG_PC9800_118 y
+   fi
    dep_tristate '    Yamaha OPL3-SA1 audio controller' CONFIG_SOUND_OPL3SA1 $CONFIG_SOUND_OSS
    dep_tristate '    Yamaha OPL3-SA2 and SA3 based PnP cards' CONFIG_SOUND_OPL3SA2 $CONFIG_SOUND_OSS
    dep_tristate '    Yamaha YMF7xx PCI audio (native mode)' CONFIG_SOUND_YMFPCI $CONFIG_SOUND_OSS $CONFIG_PCI

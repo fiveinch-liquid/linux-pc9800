@@ -25,17 +25,26 @@ if [ "$CONFIG_PARTITION_ADVANCED" = "y" ]; then
       bool '    Solaris (x86) partition table support' CONFIG_SOLARIS_X86_PARTITION
       bool '    Unixware slices support' CONFIG_UNIXWARE_DISKLABEL
    fi
+   bool '  NEC PC-9800 partition table support' CONFIG_NEC98_PARTITION
+   if [ "$CONFIG_NEC98_PARTITION" = "y" ]; then
+      bool '    BSD disklabel support for NEC PC-9800 type partitions' CONFIG_NEC98_BSD_DISKLABEL
+   fi
    bool '  SGI partition support' CONFIG_SGI_PARTITION
    bool '  Ultrix partition table support' CONFIG_ULTRIX_PARTITION
    bool '  Sun partition tables support' CONFIG_SUN_PARTITION
+   bool '  X680x0 partition table support' CONFIG_X68K_PARTITION
 else
    if [ "$ARCH" = "alpha" ]; then
       define_bool CONFIG_OSF_PARTITION y
    fi
+   if [ "$CONFIG_PC9800" = "y" ]; then
+      define_bool CONFIG_NEC98_PARTITION y
+   else
    if [ "$CONFIG_AMIGA" != "y" -a "$CONFIG_ATARI" != "y" -a \
         "$CONFIG_MAC" != "y" -a "$CONFIG_SGI_IP22" != "y" -a \
 	"$CONFIG_SGI_IP27" != "y" ]; then
       define_bool CONFIG_MSDOS_PARTITION y
+   fi
    fi
    if [ "$CONFIG_AMIGA" = "y" -o "CONFIG_AFFS_FS" = "y" ]; then
       define_bool CONFIG_AMIGA_PARTITION y

@@ -3,6 +3,8 @@
 
 #include <linux/wait.h>
 
+#include <linux/config.h>
+
 #define KG_SHIFT	0
 #define KG_CTRL		2
 #define KG_ALT		3
@@ -12,8 +14,15 @@
 #define KG_CTRLL	6
 #define KG_CTRLR	7
 #define KG_CAPSSHIFT	8
+#ifdef CONFIG_PC9800
+#define KG_KANASHIFT	9
+#endif
 
+#ifdef CONFIG_PC9800
+#define NR_SHIFT	10
+#else
 #define NR_SHIFT	9
+#endif
 
 #define NR_KEYS		128
 #define MAX_NR_KEYMAPS	256

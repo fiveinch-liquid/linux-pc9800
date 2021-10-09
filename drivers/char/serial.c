@@ -87,6 +87,19 @@ static char *serial_revdate = "2001-07-08";
  * 		ever possible.
  */
 
+/*
+ * Integrated Serial Driver for NEC PC-9800
+ *
+ * Copyright (C) 1998,99  Linux/98 project
+ *
+ * Rewritten by Yoritoshi Yamashita & Takurou Kitagawa
+ *	to support many types of PC-9800 serial I/F's.
+ *
+ * Modified following original driver, by TAKAI Kousuke
+ *
+ * FATAL TODO: Set info->io_type appropriately
+ */
+
 #include <linux/config.h>
 #include <linux/version.h>
 
@@ -110,6 +123,12 @@ static char *serial_revdate = "2001-07-08";
 #endif
 #ifndef CONFIG_SERIAL_MANY_PORTS
 #define CONFIG_SERIAL_MANY_PORTS
+#endif
+#endif
+
+#ifdef CONFIG_MC16550II
+#ifndef CONFIG_SERIAL_SHARE_IRQ
+#define CONFIG_SERIAL_SHARE_IRQ
 #endif
 #endif
 
@@ -222,6 +241,11 @@ static char *serial_revdate = "2001-07-08";
 #include <asm/irq.h>
 #include <asm/bitops.h>
 
+#ifdef CONFIG_PC9800
+#include <asm/pc9800.h>
+#include <asm/pc9800_sca.h>
+#endif
+
 #ifdef CONFIG_MAC_SERIAL
 #define SERIAL_DEV_OFFSET	2
 #else
@@ -274,6 +298,22 @@ static unsigned detect_uart_irq (struct serial_state * state);
 static void autoconfig(struct serial_state * state);
 static void change_speed(struct async_struct *info, struct termios *old);
 static void rs_wait_until_sent(struct tty_struct *tty, int timeout);
+#ifdef CONFIG_PC9800
+static void ier_out (struct async_struct *info);
+static void rs_interrupt_8251 (int irq, void *dev_id, struct pt_regs *regs);
+static unsigned int msr_in (struct async_struct *info);
+static void transmit_chars_8251 (struct async_struct *info, int *intr_done);
+static void receive_chars_8251 (struct async_struct *info, int *status);
+static void change_speed_8251 (struct async_struct *info);
+static int startup8251 (struct async_struct *info);
+static void autoconfig8251 (struct serial_state *state);
+static void mcr_out (struct async_struct *info);
+static void begin_break_8251 (struct async_struct *info);
+static void end_break_8251 (struct async_struct *info);
+static int chk_temt (struct async_struct *info);
+static void out_8251_lcr (struct async_struct *info, int mode);
+static void cmd_out_8251 (struct async_struct *info);
+#endif
 
 /*
  * Here we define the default xmit fifo size used for each type of
@@ -297,6 +337,10 @@ static struct serial_uart_config uart_config[] = {
 	{ "XR16850", 128, UART_CLEAR_FIFO | UART_USE_FIFO |
 		  UART_STARTECH },
 	{ "RSA", 2048, UART_CLEAR_FIFO | UART_USE_FIFO }, 
+#ifdef CONFIG_PC9800
+	{ "8251", 1, 0 },
+	{ "MC16550II",16, UART_CLEAR_FIFO | UART_USE_FIFO },
+#endif
 	{ 0, 0}
 };
 
@@ -398,6 +442,62 @@ static inline int serial_paranoia_check(struct async_struct *info,
 	return 0;
 }
 
+#ifdef CONFIG_PC9800
+/*
+ * This is used to figure out the divisor speeds and the timeouts
+ */
+static int div_table_8251_5[]={
+    0, 3072, 2048, 0, 0, 1024, 768, 512, 256, 128,
+    0, 64, 32, 16, 8, 4, 0, 0, 0, 0,
+    0
+};
+static int div_table_8251_8[]={
+    0, 2496, 1664, 0, 0, 832, 624, 416, 208, 104,
+    0, 52, 26, 13, 6, 3, 0, 0, 0, 0,
+    0
+};
+
+#define FIFO_ON_8251F() \
+	outb(inb(FCR_8251F) | UART_FCR_ENABLE_FIFO, FCR_8251F)
+#define FIFO_OFF_8251F() \
+	outb(inb(FCR_8251F) & ~UART_FCR_ENABLE_FIFO, FCR_8251F)
+
+#define MODE_COM1_NORMAL	0
+#define MODE_COM1_VFAST	1
+#define MODE_COM1_FIFO	2
+static int mode_com1 = MODE_COM1_NORMAL;
+static int speed_pc98 = 0;
+static int lcr_pc98 = 0;
+static int mcr_pc98 = 0;
+static int scr_pc98 = 0;
+static int cmd_8251f = 0x15;
+
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(2,3,11)
+#define CONFIG_RESOURCE98
+#endif
+
+#ifdef CONFIG_RESOURCE98
+#define COM1_EXTENT1 -5
+/*#define COM1_EXTENT1 -3
+  #define COM1_EXTENT2 -4*/
+#define COM1_EXTENT3 -11
+#else
+#define COM1_EXTENT1 3
+#define COM1_EXTENT2 4
+#define COM1_EXTENT3 10
+#endif
+
+#define system_clock (*(unsigned char*)(__va(PC9800SCA_BIOS_FLAG)) & 0x80)
+
+static void wait_8251f(void)
+{
+	outb(0, 0x5f);
+	outb(0, 0x5f);
+	outb(0, 0x5f);
+	outb(0, 0x5f);
+}
+#endif /* CONFIG_PC9800 */
+
 static _INLINE_ unsigned int serial_in(struct async_struct *info, int offset)
 {
 	switch (info->io_type) {
@@ -412,6 +512,46 @@ static _INLINE_ unsigned int serial_in(struct async_struct *info, int offset)
 #ifdef CONFIG_SERIAL_GSC
 	case SERIAL_IO_GSC:
 		return gsc_readb(info->iomem_base + offset);
+#endif
+#ifdef CONFIG_PC9800
+	case SERIAL_IO_8251:
+		switch (offset) {
+			u8 tmp;
+		case +0:	/* RX/TX/DLL/TRG */
+			if (lcr_pc98 & UART_LCR_DLAB
+			    /* && mode_com1 != MODE_COM1_NORMAL */)
+				return speed_pc98;
+			return inb (RX_8251F);
+		case +1:	/* DLM/IER/FCTR */
+			if (lcr_pc98 & UART_LCR_DLAB)
+				return 0;
+			tmp = inb (IER1_8251F);
+			return (((inb (IER2_8251F) & 0x18) >> 1)
+				| ((tmp & 0x04) >> 1) | (tmp & 0x01));
+		case +2:	/* IIR/FCR/EFR */
+			return (inb (IIR_8251F) & 0x0f) | 0xc0;
+		case +3:	/* LCR */
+			return lcr_pc98;
+		case +4:	/* MCR */
+			return mcr_pc98;
+		case +5:	/* LSR */
+			tmp = inb (LSR_8251F);
+			return (((tmp & 0x64) >> 2) | ((tmp & 0x10) >> 3)
+				| ((tmp & 0x08) >> 1) | ((tmp & 0x02) << 4)
+				| ((tmp & 0x01) << 6));
+		case +6:
+			return inb (MSR_8251F);
+		case +7:
+			return scr_pc98;
+		}
+		printk (KERN_WARNING
+			"16550A emuration: unsupported offset %d\n",
+			offset);
+		return 0;
+#endif
+#ifdef CONFIG_MC16550II
+	case SERIAL_IO_MC16550II:
+		return inb_p (info->port + (offset << 8));
 #endif
 	default:
 		return inb(info->port + offset);
@@ -436,6 +576,137 @@ static _INLINE_ void serial_out(struct async_struct *info, int offset,
 	case SERIAL_IO_GSC:
 		gsc_writeb(value, info->iomem_base + offset);
 		break;
+#endif
+#ifdef CONFIG_PC9800
+	case SERIAL_IO_8251:
+		switch (offset) {
+			int tmp;
+			u8 tmp8;
+			unsigned long flags;
+		case +0:
+			if (lcr_pc98 & UART_LCR_DLAB) {
+				speed_pc98 = value;
+				if (mode_com1 == MODE_COM1_VFAST) {
+					if (value <= 0x0c) {
+						outb (value | VFAST_ENABLE,
+						      VFAST_8251F);
+						return;
+					}
+					outb (0, VFAST_8251F);
+				}
+				if (PC9800_8MHz_P ())
+					tmp = (value * 13) / 12;
+				else
+					tmp = (value * 4) / 3;
+				save_flags (flags);
+				cli ();
+				outb_p (0xb6, 0x77);
+				outb_p (tmp, 0x75);
+				outb_p (tmp >> 8, 0x75);
+				restore_flags (flags);
+			}
+			else
+				outb (value, TX_8251F);
+			return;
+		case +1:
+			if (!(lcr_pc98 & UART_LCR_DLAB)) {
+				save_flags (flags);
+				cli ();
+				tmp8 = inb (IER2_8251F);
+				outb (value & 0x01, IER1_8251F_COUT);
+				outb ((tmp8 & 0xe7) | ((value & 0x0c) << 1),
+				      IER2_8251F);
+				outb (((value & 0x02) >> 1) | 0x04,
+				      IER1_8251F_COUT);
+				restore_flags (flags);
+			}
+			return;
+		case +2:
+			save_flags (flags);
+			cli ();
+			outb ((inb (FCR_8251F) & 0x18) | (value & 0xe7) | 0x01,
+			      FCR_8251F);
+			restore_flags (flags);
+			return;
+		case +3:
+			save_flags (flags);
+			cli ();
+			if ((lcr_pc98 ^ value) & 0x3f) {
+				FIFO_OFF_8251F ();
+				outb (COMMAND_8251F_DUMMY, COMMAND_8251F);
+				FIFO_ON_8251F ();
+				wait_8251f ();
+				FIFO_OFF_8251F ();
+				outb (COMMAND_8251F_DUMMY, COMMAND_8251F);
+				FIFO_ON_8251F ();
+				wait_8251f ();
+				FIFO_OFF_8251F ();
+				outb (COMMAND_8251F_DUMMY, COMMAND_8251F);
+				FIFO_ON_8251F ();
+				wait_8251f ();
+				FIFO_OFF_8251F ();
+				outb (COMMAND_8251F_RESET, COMMAND_8251F);
+				FIFO_ON_8251F ();
+				wait_8251f ();
+
+				tmp8 = (((value & 0x03) << 2)
+					| ((value & 0x18) << 1) | 0x02);
+				if (value & 4) {
+					tmp8 |= 0x80;
+					if (value & 3)
+						tmp8 |= 0x40;
+				}
+				else
+					tmp8 |= 0x40;
+
+				FIFO_OFF_8251F ();
+				outb (tmp8, COMMAND_8251F); /* mode write */
+				FIFO_ON_8251F ();
+				wait_8251f ();
+
+				if ((lcr_pc98 ^ value) & 0x40)
+					goto modify_command;
+				goto command_write;
+			}
+			if ((lcr_pc98 ^ value) & 0x40) {
+			modify_command:
+				cmd_8251f = ((cmd_8251f & 0xf7)
+					     | ((value & 0x40) >> 3));
+			command_write:
+				FIFO_OFF_8251F ();
+				/* command write */
+				outb (cmd_8251f, COMMAND_8251F);
+				FIFO_ON_8251F ();
+			}
+			lcr_pc98 = value;
+			restore_flags (flags);
+			wait_8251f ();
+			return;
+		case +4:
+			save_flags (flags);
+			cli ();
+			if ((mcr_pc98 ^ value) & 0x03) {
+				cmd_8251f = ((cmd_8251f & 0xdd)
+					     | (((char []){ 0x00, 0x02,
+							    0x20, 0x22 })
+						[value & 0x03]));
+				FIFO_OFF_8251F ();
+				/* command write */
+				outb(cmd_8251f, COMMAND_8251F);
+				FIFO_ON_8251F ();
+			}
+			mcr_pc98 = value;
+			restore_flags (flags);
+			wait_8251f ();
+			return;
+		case +7:
+			scr_pc98 = value;
+			return;
+		}
+		printk (KERN_WARNING
+			"16550A emuration: unsupported offset %d\n",
+			offset);
+		return;
 #endif
 	default:
 		outb(value, info->port+offset);
@@ -491,6 +762,11 @@ static void rs_stop(struct tty_struct *tty)
 	save_flags(flags); cli();
 	if (info->IER & UART_IER_THRI) {
 		info->IER &= ~UART_IER_THRI;
+#ifdef CONFIG_PC9800
+		if (info->line==0 && mode_com1==MODE_COM1_NORMAL)
+			ier_out(info);
+		else
+#endif
 		serial_out(info, UART_IER, info->IER);
 	}
 	if (info->state->type == PORT_16C950) {
@@ -513,6 +789,11 @@ static void rs_start(struct tty_struct *tty)
 	    && info->xmit.buf
 	    && !(info->IER & UART_IER_THRI)) {
 		info->IER |= UART_IER_THRI;
+#ifdef CONFIG_PC9800
+		if (info->line==0 && mode_com1==MODE_COM1_NORMAL)
+			ier_out(info);
+		else
+#endif
 		serial_out(info, UART_IER, info->IER);
 	}
 	if (info->state->type == PORT_16C950) {
@@ -723,6 +1004,11 @@ static _INLINE_ void check_modem_status(struct async_struct *info)
 	int	status;
 	struct	async_icount *icount;
 	
+#ifdef CONFIG_PC9800
+	if (info->line==0 && mode_com1==MODE_COM1_NORMAL)
+		status= msr_in(info);
+	else
+#endif
 	status = serial_in(info, UART_MSR);
 
 	if (status & UART_MSR_ANY_DELTA) {
@@ -769,6 +1055,11 @@ static _INLINE_ void check_modem_status(struct async_struct *info)
 #endif
 				info->tty->hw_stopped = 0;
 				info->IER |= UART_IER_THRI;
+#ifdef CONFIG_PC9800
+				if(info->line==0 && mode_com1==MODE_COM1_NORMAL)
+					ier_out(info);
+				else
+#endif
 				serial_out(info, UART_IER, info->IER);
 				rs_sched_event(info, RS_EVENT_WRITE_WAKEUP);
 				return;
@@ -780,6 +1071,11 @@ static _INLINE_ void check_modem_status(struct async_struct *info)
 #endif
 				info->tty->hw_stopped = 1;
 				info->IER &= ~UART_IER_THRI;
+#ifdef CONFIG_PC9800
+				if (info->line==0 && mode_com1==MODE_COM1_NORMAL)
+					ier_out(info);
+				else
+#endif
 				serial_out(info, UART_IER, info->IER);
 			}
 		}
@@ -1088,6 +1384,11 @@ static void rs_timer(unsigned long dummy)
 					rs_interrupt(i, NULL, NULL);
 			} else
 #endif /* CONFIG_SERIAL_SHARE_IRQ */
+#ifdef CONFIG_PC9800
+			if(info->line==0 && mode_com1==MODE_COM1_NORMAL)
+				rs_interrupt_8251(i,NULL,NULL);
+			else
+#endif
 				rs_interrupt_single(i, NULL, NULL);
 			restore_flags(flags);
 		}
@@ -1195,6 +1496,13 @@ static int startup(struct async_struct * info)
 	unsigned long page;
 #ifdef CONFIG_SERIAL_MANY_PORTS
 	unsigned short ICP;
+#endif
+
+#ifdef CONFIG_PC9800
+	if(info->line==0 && mode_com1==MODE_COM1_NORMAL){
+		/* do almost same thing */
+		return startup8251(info);
+	}
 #endif
 
 	page = get_zeroed_page(GFP_KERNEL);
@@ -1511,6 +1819,11 @@ static void shutdown(struct async_struct * info)
 	}
 
 	info->IER = 0;
+#ifdef CONFIG_PC9800
+	if(info->line==0 && mode_com1==MODE_COM1_NORMAL)
+		ier_out(info);
+	else
+#endif
 	serial_outp(info, UART_IER, 0x00);	/* disable all intrs */
 #ifdef CONFIG_SERIAL_MANY_PORTS
 	if (info->flags & ASYNC_FOURPORT) {
@@ -1527,9 +1840,19 @@ static void shutdown(struct async_struct * info)
 	
 	if (!info->tty || (info->tty->termios->c_cflag & HUPCL))
 		info->MCR &= ~(UART_MCR_DTR|UART_MCR_RTS);
+#ifdef CONFIG_PC9800
+	if(info->line==0 && mode_com1==MODE_COM1_NORMAL)
+		mcr_out(info);
+	else
+#endif
 	serial_outp(info, UART_MCR, info->MCR);
 
 	/* disable FIFO's */	
+#ifdef CONFIG_PC9800
+	if (info->line==0 && mode_com1==MODE_COM1_NORMAL) {
+		(void)inb(info->port + PORT_8251_DATA);
+	} else {
+#endif
 	serial_outp(info, UART_FCR, (UART_FCR_ENABLE_FIFO |
 				     UART_FCR_CLEAR_RCVR |
 				     UART_FCR_CLEAR_XMIT));
@@ -1547,6 +1870,9 @@ static void shutdown(struct async_struct * info)
 	
 
 	(void)serial_in(info, UART_RX);    /* read data port to reset things */
+#ifdef CONFIG_PC9800
+	}
+#endif	
 	
 	if (info->tty)
 		set_bit(TTY_IO_ERROR, &info->tty->flags);
@@ -1617,6 +1943,13 @@ static void change_speed(struct async_struct *info,
 	cflag = info->tty->termios->c_cflag;
 	if (!CONFIGURED_SERIAL_PORT(info))
 		return;
+
+#ifdef CONFIG_PC9800
+	if(info->line==0 && mode_com1==MODE_COM1_NORMAL){
+		change_speed_8251(info);
+		return;
+	}
+#endif
 
 	/* byte size and parity */
 	switch (cflag & CSIZE) {
@@ -1705,6 +2038,9 @@ static void change_speed(struct async_struct *info,
 	    (info->state->revision == 0x5201))
 		quot++;
 	
+
+	printk(KERN_DEBUG "change_speed(): baud_base=%d, baud==%d, quot=%d\n",baud_base,baud,quot);
+
 	info->quot = quot;
 	info->timeout = ((info->xmit_fifo_size*HZ*bits*quot) / baud_base);
 	info->timeout += HZ/50;		/* Add .02 seconds of slop */
@@ -1716,6 +2052,10 @@ static void change_speed(struct async_struct *info,
 #ifdef CONFIG_SERIAL_RSA
 		else if (info->state->type == PORT_RSA)
 			fcr = UART_FCR_ENABLE_FIFO | UART_FCR_TRIGGER_14;
+#endif
+#ifdef CONFIG_PC9800
+		else if (info->line==0 && (mode_com1==MODE_COM1_FIFO))
+			fcr = UART_FCR_ENABLE_FIFO | UART_FCR_TRIGGER_1;
 #endif
 		else
 			fcr = UART_FCR_ENABLE_FIFO | UART_FCR_TRIGGER_8;
@@ -1834,6 +2174,11 @@ static void rs_flush_chars(struct tty_struct *tty)
 
 	save_flags(flags); cli();
 	info->IER |= UART_IER_THRI;
+#ifdef CONFIG_PC9800
+	if (info->line==0 && mode_com1==MODE_COM1_NORMAL)
+		ier_out(info);
+	else
+#endif
 	serial_out(info, UART_IER, info->IER);
 	restore_flags(flags);
 }
@@ -1910,6 +2255,11 @@ static int rs_write(struct tty_struct * tty, int from_user,
 	    && !tty->hw_stopped
 	    && !(info->IER & UART_IER_THRI)) {
 		info->IER |= UART_IER_THRI;
+#ifdef CONFIG_PC9800
+		if (info->line==0 && mode_com1==MODE_COM1_NORMAL)
+			ier_out(info);
+		else
+#endif
 		serial_out(info, UART_IER, info->IER);
 	}
 	return ret;
@@ -1967,6 +2317,11 @@ static void rs_send_xchar(struct tty_struct *tty, char ch)
 	if (ch) {
 		/* Make sure transmit interrupts are on */
 		info->IER |= UART_IER_THRI;
+#ifdef CONFIG_PC9800
+		if (info->line==0 && mode_com1==MODE_COM1_NORMAL)
+			ier_out(info);
+		else
+#endif
 		serial_out(info, UART_IER, info->IER);
 	}
 }
@@ -2000,6 +2355,11 @@ static void rs_throttle(struct tty_struct * tty)
 		info->MCR &= ~UART_MCR_RTS;
 
 	save_flags(flags); cli();
+#ifdef CONFIG_PC9800
+	if (info->line==0 && mode_com1==MODE_COM1_NORMAL)
+		mcr_out(info);
+	else
+#endif
 	serial_out(info, UART_MCR, info->MCR);
 	restore_flags(flags);
 }
@@ -2027,6 +2387,11 @@ static void rs_unthrottle(struct tty_struct * tty)
 	if (tty->termios->c_cflag & CRTSCTS)
 		info->MCR |= UART_MCR_RTS;
 	save_flags(flags); cli();
+#ifdef CONFIG_PC9800
+	if (info->line==0 && mode_com1==MODE_COM1_NORMAL)
+		mcr_out(info);
+	else
+#endif
 	serial_out(info, UART_MCR, info->MCR);
 	restore_flags(flags);
 }
@@ -2151,6 +2516,22 @@ static int set_serial_info(struct async_struct * info,
 	info->xmit_fifo_size = state->xmit_fifo_size =
 		new_serial.xmit_fifo_size;
 
+#ifdef CONFIG_PC9800
+	if (state->type != PORT_UNKNOWN
+	    && state->port == 0x30 /*info->line==0*/ ) {
+#ifdef CONFIG_RESOURCE98
+		release_region(state->port, COM1_EXTENT1);
+		/* release_region(state->port+4, COM1_EXTENT2); */
+#endif
+		release_region(state->port+0x100, COM1_EXTENT3);
+	}else
+#endif
+#ifdef CONFIG_MC16550II
+	if (state->type != PORT_UNKNOWN && (state->port & 0xf0) == 0xd0) {
+		for (i = 0; i < 7; i++)
+			release_region(state->port + i * 0x100, 1);
+	}else  
+#endif
 	if ((state->type != PORT_UNKNOWN) && state->port) {
 #ifdef CONFIG_SERIAL_RSA
 		if (old_state.type == PORT_RSA)
@@ -2181,9 +2562,24 @@ static int set_serial_info(struct async_struct * info,
 				       16, "serial_rsa(set)");
 		else
 #endif
+#ifdef CONFIG_PC9800
+		if (state->port == 0x30) {
+#ifdef CONFIG_RESOURCE98
+			request_region(state->port, COM1_EXTENT1, "serial(set)");
+/*			request_region(state->port+4, COM1_EXTENT2, "serial(set2)");*/
+#endif
+			request_region(state->port+0x100, COM1_EXTENT3, "serial(set3)");
+		}else
+#endif
+#ifdef CONFIG_MC16550II
+		if((state->port  & 0xf0)== 0xd0){
+			for(i=0;i<7;i++)
+				request_region(state->port + i * 0x100, 1,
+					       "serial(MC16550)");
+		}else
+#endif
 			request_region(state->port,8,"serial(set)");
 	}
-
 	
 check_and_exit:
 	if (!state->port || !state->type)
@@ -2227,8 +2623,18 @@ static int get_lsr_info(struct async_struct * info, unsigned int *value)
 	unsigned long flags;
 
 	save_flags(flags); cli();
+#ifdef CONFIG_PC9800
+	if(info->line==0 && mode_com1==MODE_COM1_NORMAL)
+		status = inb (0x32);
+	else
+#endif
 	status = serial_in(info, UART_LSR);
 	restore_flags(flags);
+#ifdef CONFIG_PC9800
+	if(info->line==0 && mode_com1==MODE_COM1_NORMAL)
+		result = ((status & 4) ? TIOCSER_TEMT : 0);
+	else
+#endif
 	result = ((status & UART_LSR_TEMT) ? TIOCSER_TEMT : 0);
 
 	/*
@@ -2257,6 +2663,11 @@ static int get_modem_info(struct async_struct * info, unsigned int *value)
 
 	control = info->MCR;
 	save_flags(flags); cli();
+#ifdef CONFIG_PC9800
+	if(info->line==0 && mode_com1==MODE_COM1_NORMAL)
+		status = msr_in(info);
+	else
+#endif
 	status = serial_in(info, UART_MSR);
 	restore_flags(flags);
 	result =  ((control & UART_MCR_RTS) ? TIOCM_RTS : 0)
@@ -2334,6 +2745,11 @@ static int set_modem_info(struct async_struct * info, unsigned int cmd,
 	}
 	save_flags(flags); cli();
 	info->MCR |= ALPHA_KLUDGE_MCR; 		/* Don't ask */
+#ifdef CONFIG_PC9800
+	if (info->line==0 && mode_com1==MODE_COM1_NORMAL)
+		mcr_out(info);
+	else
+#endif
 	serial_out(info, UART_MCR, info->MCR);
 	restore_flags(flags);
 	return 0;
@@ -2396,11 +2812,22 @@ static void rs_break(struct tty_struct *tty, int break_state)
 	if (!CONFIGURED_SERIAL_PORT(info))
 		return;
 	save_flags(flags); cli();
+#ifdef CONFIG_PC9800
+	if (info->line == 0 && mode_com1 == MODE_COM1_NORMAL) {
+		if (break_state == -1)
+			begin_break_8251(info);
+		else
+			end_break_8251(info);
+	} else {
+#endif
 	if (break_state == -1)
 		info->LCR |= UART_LCR_SBC;
 	else
 		info->LCR &= ~UART_LCR_SBC;
 	serial_out(info, UART_LCR, info->LCR);
+#ifdef CONFIG_PC9800
+	}
+#endif
 	restore_flags(flags);
 }
 #endif
@@ -2509,7 +2936,12 @@ static int set_multiport_struct(struct async_struct * info,
 			handler = rs_interrupt;
 
 		retval = request_irq(state->irq, handler, SA_SHIRQ,
+#ifdef CONFIG_MC16550II
+        (((state->port & 0xf0)== 0xd0)? "serial(MC16550II)":"serial"),
+					&IRQ_ports[state->irq]);
+#else
 				     "serial", &IRQ_ports[state->irq]);
+#endif
 		if (retval) {
 			printk("Couldn't reallocate serial interrupt "
 			       "driver!!\n");
@@ -2696,6 +3128,13 @@ static void rs_set_termios(struct tty_struct *tty, struct termios *old_termios)
 		== RELEVANT_IFLAG(old_termios->c_iflag)))
 	  return;
 
+#if 0
+#ifdef CONFIG_PC9800
+	if (info->line==0 && mode_com1==MODE_COM1_NORMAL)
+		change_speed_8251(info);
+	else
+#endif
+#endif
 	change_speed(info, old_termios);
 
 	/* Handle transition to B0 status */
@@ -2703,6 +3142,11 @@ static void rs_set_termios(struct tty_struct *tty, struct termios *old_termios)
 	    !(cflag & CBAUD)) {
 		info->MCR &= ~(UART_MCR_DTR|UART_MCR_RTS);
 		save_flags(flags); cli();
+#ifdef CONFIG_PC9800
+		if (info->line==0 && mode_com1==MODE_COM1_NORMAL)
+			mcr_out(info);
+		else
+#endif
 		serial_out(info, UART_MCR, info->MCR);
 		restore_flags(flags);
 	}
@@ -2716,6 +3160,11 @@ static void rs_set_termios(struct tty_struct *tty, struct termios *old_termios)
 			info->MCR |= UART_MCR_RTS;
 		}
 		save_flags(flags); cli();
+#ifdef CONFIG_PC9800
+		if (info->line==0 && mode_com1==MODE_COM1_NORMAL)
+			mcr_out(info);
+		else
+#endif
 		serial_out(info, UART_MCR, info->MCR);
 		restore_flags(flags);
 	}
@@ -2820,8 +3269,17 @@ static void rs_close(struct tty_struct *tty, struct file * filp)
 	 * line status register.
 	 */
 	info->IER &= ~UART_IER_RLSI;
-	info->read_status_mask &= ~UART_LSR_DR;
+	info->read_status_mask &= 
+#ifdef CONFIG_PC9800
+		(info->line==0 && mode_com1==MODE_COM1_NORMAL) ? ~STAT_8251_RXRDY :
+#endif
+		~UART_LSR_DR;
 	if (info->flags & ASYNC_INITIALIZED) {
+#ifdef CONFIG_PC9800
+		if (info->line==0 && mode_com1==MODE_COM1_NORMAL)
+			ier_out(info);
+		else
+#endif
 		serial_out(info, UART_IER, info->IER);
 		/*
 		 * Before we drop DTR, make sure the UART transmitter
@@ -2899,11 +3357,19 @@ static void rs_wait_until_sent(struct tty_struct *tty, int timeout)
 	printk("In rs_wait_until_sent(%d) check=%lu...", timeout, char_time);
 	printk("jiff=%lu...", jiffies);
 #endif
+#ifndef CONFIG_PC9800
 	while (!((lsr = serial_inp(info, UART_LSR)) & UART_LSR_TEMT)) {
+#else
+	while ((lsr = ((info->line==0&&mode_com1==MODE_COM1_NORMAL)?
+		       chk_temt(info):
+		       serial_inp(info, UART_LSR))) ,
+	       (!(lsr&UART_LSR_TEMT))) {
+#endif
 #ifdef SERIAL_DEBUG_RS_WAIT_UNTIL_SENT
 		printk("lsr = %d (jiff=%lu)...", lsr, jiffies);
 #endif
 		set_current_state(TASK_INTERRUPTIBLE);
+		current->counter = 0;	/* make us low-priority */
 		schedule_timeout(char_time);
 		if (signal_pending(current))
 			break;
@@ -3032,9 +3498,19 @@ static int block_til_ready(struct tty_struct *tty, struct file * filp,
 		save_flags(flags); cli();
 		if (!(info->flags & ASYNC_CALLOUT_ACTIVE) &&
 		    (tty->termios->c_cflag & CBAUD))
+#ifdef CONFIG_PC9800
+                {
+			if(info->line==0 && mode_com1==MODE_COM1_NORMAL) {
+				info->MCR|=3;
+				mcr_out(info);
+			} else
+#endif
 			serial_out(info, UART_MCR,
 				   serial_inp(info, UART_MCR) |
 				   (UART_MCR_DTR | UART_MCR_RTS));
+#ifdef CONFIG_PC9800
+		}
+#endif
 		restore_flags(flags);
 		set_current_state(TASK_INTERRUPTIBLE);
 		if (tty_hung_up_p(filp) ||
@@ -3265,6 +3741,11 @@ static inline int line_info(char *buf, struct serial_state *state)
 		info->tty = 0;
 	}
 	save_flags(flags); cli();
+#ifdef CONFIG_PC9800
+	if(info->line==0 && mode_com1==MODE_COM1_NORMAL)
+		status = msr_in(info);
+	else
+#endif
 	status = serial_in(info, UART_MSR);
 	control = info != &scr_info ? info->MCR : serial_in(info, UART_MCR);
 	restore_flags(flags); 
@@ -3377,6 +3858,10 @@ static char serial_options[] __initdata =
 #endif
 #ifdef ENABLE_SERIAL_PNP
        " ISAPNP"
+#define SERIAL_OPT
+#endif
+#ifdef CONFIG_MC16550II
+	printk(" MC16550II");
 #define SERIAL_OPT
 #endif
 #ifdef SERIAL_OPT
@@ -3615,6 +4100,36 @@ static void autoconfig(struct serial_state * state)
 	printk("Testing ttyS%d (0x%04lx, 0x%04x)...\n", state->line,
 	       state->port, (unsigned) state->iomem_base);
 #endif
+
+#ifdef CONFIG_PC9800
+	if(state->port == 0x30){
+		unsigned char t1 = inb(IIR_8251F);
+		unsigned char t2 = inb(IIR_8251F);
+		unsigned char rsflags =
+			(*(unsigned char*)__va(PC9821SCA_RSFLAGS));
+
+		state->io_type = SERIAL_IO_8251;
+		if(((t1 & 0x40) != (t2 & 0x40)) &&
+		   (!((t1 & 0x20) | (t2 & 0x20)))){
+			if(rsflags & 0x10){
+				printk(KERN_INFO "COM1: V.Fast/FIFO Mode (System clock is %dMHz).\n",(system_clock ? 8 : 5));
+				mode_com1 = MODE_COM1_VFAST;
+			}else{
+				printk(KERN_INFO "COM1: FIFO Mode (System clock is %dMHz).\n",(system_clock ? 8 : 5));
+				mode_com1 = MODE_COM1_FIFO;
+				state->type = PORT_8251;
+			}
+		} else {
+			printk(KERN_INFO "COM1: Normal Mode (System clock %dMHz)\n",(system_clock ? 8 : 5));
+			/* return;*/
+		}
+	}
+	if(state->line==0 && mode_com1==MODE_COM1_NORMAL){
+		autoconfig8251(state);
+		printk("autoconfig8251 finished(type=%d).\n",state->type);
+		return ;
+	}
+#endif /* CONFIG_PC9800 */
 	
 	if (!CONFIGURED_SERIAL_PORT(state))
 		return;
@@ -3648,13 +4163,26 @@ static void autoconfig(struct serial_state * state)
 		 */
 		scratch = serial_inp(info, UART_IER);
 		serial_outp(info, UART_IER, 0);
+#ifdef CONFIG_MC16550II
+		if((state->port & 0xf0) == 0xd0)
+			outb(0xff, 0x080);
+		else
+#endif
 #ifdef __i386__
+#ifndef CONFIG_PC9800
 		outb(0xff, 0x080);
+#else
+		outb(0xff, 0x05f);
+#endif
 #endif
 		scratch2 = serial_inp(info, UART_IER);
 		serial_outp(info, UART_IER, 0x0F);
 #ifdef __i386__
+#ifndef CONFIG_PC9800
 		outb(0, 0x080);
+#else
+		outb(0, 0x05f);
+#endif
 #endif
 		scratch3 = serial_inp(info, UART_IER);
 		serial_outp(info, UART_IER, scratch);
@@ -3699,6 +4227,10 @@ static void autoconfig(struct serial_state * state)
 	serial_outp(info, UART_LCR, 0);
 	serial_outp(info, UART_FCR, UART_FCR_ENABLE_FIFO);
 	scratch = serial_in(info, UART_IIR) >> 6;
+
+#ifdef CONFIG_PC9800
+	if (!state->type)
+#endif
 	switch (scratch) {
 		case 0:
 			state->type = PORT_16450;
@@ -3713,7 +4245,28 @@ static void autoconfig(struct serial_state * state)
 			state->type = PORT_16550A;
 			break;
 	}
-	if (state->type == PORT_16550A) {
+#ifdef CONFIG_MC16550II
+	if ((state->port &0xf0)==0xd0){
+		state->type = PORT_MC16550II;
+		switch(state->irq) {
+		case 3:
+			outb(0x4, (info->port & 0xff) + 0x1000);
+			break;          
+		case 5:
+			outb(0x5, (info->port & 0xff) + 0x1000);
+			break;          
+		case 6:
+			outb(0x6, (info->port & 0xff) + 0x1000);
+			break;          
+		case 12:
+			outb(0x7, (info->port & 0xff) + 0x1000);
+			break;
+		}
+	}
+	if (state->type == PORT_16550A || state->type == PORT_MC16550II) {
+#else
+ 	if (state->type == PORT_16550A) {
+#endif
 		/* Check for Startech UART's */
 		serial_outp(info, UART_LCR, UART_LCR_DLAB);
 		if (serial_in(info, UART_EFR) == 0) {
@@ -3724,7 +4277,12 @@ static void autoconfig(struct serial_state * state)
 				autoconfig_startech_uarts(info, state, flags);
 		}
 	}
-	if (state->type == PORT_16550A) {
+
+#ifdef CONFIG_MC16550II
+	if (state->type == PORT_16550A || state->type == PORT_MC16550II) {
+#else
+ 	if (state->type == PORT_16550A) {
+#endif
 		/* Check for TI 16750 */
 		serial_outp(info, UART_LCR, save_lcr | UART_LCR_DLAB);
 		serial_outp(info, UART_FCR,
@@ -3784,6 +4342,23 @@ static void autoconfig(struct serial_state * state)
 		restore_flags(flags);
 		return;
 	}
+#ifdef CONFIG_PC9800
+	if (state->line == 0) {
+#ifdef CONFIG_RESOURCE98
+		request_region(info->port, COM1_EXTENT1, "serial(auto)");
+/*		request_region(info->port+4, COM1_EXTENT2, "serial(auto2)");*/
+#endif
+		request_region(info->port+0x100, COM1_EXTENT3, "serial(auto3)");
+	}else
+#endif
+#ifdef CONFIG_MC16550II
+	if((state->port  & 0xf0)== 0xd0){
+		int i;
+		for(i=0;i<7;i++)
+			request_region(state->port + i * 0x100, 1,
+				       "serial(MC16550)");
+	}else
+#endif
 
 	if (info->port) {
 #ifdef CONFIG_SERIAL_RSA
@@ -5044,6 +5619,10 @@ static struct pnp_board pnp_devices[] __devinitdata = {
 	{	ISAPNP_VENDOR('M', 'V', 'X'), ISAPNP_DEVICE(0x00A1) },
 	/* PC Rider K56 Phone System PnP */
 	{	ISAPNP_VENDOR('M', 'V', 'X'), ISAPNP_DEVICE(0x00F2) },
+#ifdef CONFIG_PC9800
+	/* NEC NOTE専用SPEAKER PHONE 機能付FAX MODEM(33600bps) */
+	{	ISAPNP_VENDOR('n', 'E', 'C'), ISAPNP_DEVICE(0x8241) },
+#endif
 	/* Pace 56 Voice Internal Plug & Play Modem */
 	{	ISAPNP_VENDOR('P', 'M', 'C'), ISAPNP_DEVICE(0x2430) },
 	/* Generic */
@@ -5243,7 +5822,12 @@ static int _INLINE_ serial_pnp_guess_board(struct pci_dev *dev,
 			   ((port->min == 0x2f8) ||
 			    (port->min == 0x3f8) ||
 			    (port->min == 0x2e8) ||
+#ifndef CONFIG_PC9800
 			    (port->min == 0x3e8)))
+#else
+			    (port->min == 0x3e8) ||
+			    (port->min == 0x8b0)))
+#endif
 			       return 0;
        }
 
@@ -5427,6 +6011,26 @@ static int __init rs_init(void)
 		state->irq = irq_cannonicalize(state->irq);
 		if (state->hub6)
 			state->io_type = SERIAL_IO_HUB6;
+#ifdef CONFIG_PC9800
+		if (state->line==0){
+			if(
+#ifdef CONFIG_RESOURCE98
+			check_region(state->port, COM1_EXTENT1) &&
+/*			check_region(state->port+4, COM1_EXTENT2) &&*/
+#endif
+			check_region(state->port+0x100, COM1_EXTENT3))
+			continue;
+		}else
+#endif
+#ifdef CONFIG_MC16550II
+		if (state->line!=0 && (state->port&0xf0)==0xd0){
+			if(check_region(state->port,1) &&
+			   check_region(state->port+0x100,1) &&
+			   check_region(state->port+0x200,1) &&
+			   check_region(state->port+0x300,1))
+				continue;
+		}else
+#endif
 		if (state->port && check_region(state->port,8))
 			continue;
 		if (state->flags & ASYNC_BOOT_AUTOCONF)
@@ -5648,7 +6252,24 @@ static void __exit rs_fini(void)
 					       UART_RSA_BASE, 16);
 			else
 #endif
-				release_region(rs_table[i].port, 8);
+#ifdef CONFIG_PC9800
+			/* if (rs_table[i].type==PORT_8251){ */
+			if (rs_table[i].port==0x30){
+#ifdef CONFIG_RESOURCE98
+				release_region(rs_table[i].port, COM1_EXTENT1);
+/*				release_region(rs_table[i].port+4, COM1_EXTENT2);*/
+#endif
+				release_region(rs_table[i].port+0x100, COM1_EXTENT3);
+			}else
+#endif
+#ifdef CONFIG_MC16550II
+			if((rs_table[i].port  & 0xf0)== 0xd0){
+				int j;
+				for(j=0;j<7;j++)
+					release_region(rs_table[i].port + j * 0x100, 1);
+			}else
+#endif
+ 			release_region(rs_table[i].port, 8);
 		}
 #if defined(ENABLE_SERIAL_PCI) || defined(ENABLE_SERIAL_PNP)
 		if (rs_table[i].iomem_base)
@@ -5949,6 +6570,619 @@ void __init serial_console_init(void)
 	register_console(&sercons);
 }
 #endif
+
+#ifdef CONFIG_PC9800
+
+/*
+ * 8251 Serial Driver for PC-9800
+ */
+
+static void autoconfig8251(struct serial_state * state)
+{
+	unsigned char scratch, scratch2;
+	struct async_struct *info, scr_info;
+	unsigned long flags;
+	int tmp;
+
+	if (!state->port)
+		return;
+
+	info = &scr_info;       /* This is just for serial_{in,out} */
+
+	info->magic = SERIAL_MAGIC;
+	info->port = state->port;
+	info->flags = state->flags;
+
+	out_8251_lcr(info, 0xf2);
+	outb(0x01, state->port + PORT_8251_CMD);
+	udelay(1000);
+	if(!(inb_p(state->port + PORT_8251_STS)& STAT_8251_TXRDY))
+		return;
+	save_flags(flags); cli();
+	tmp =(inb(IER1_8251F)& ~(INTR_8251_RXRE|INTR_8251_TXEE|INTR_8251_TXRE));
+	outb((tmp | 0x2),IER1_8251F);   
+	outb(tmp ,IER1_8251F);
+
+	/*
+	 * Do a simple existence test first; if we fail this, there's
+	 * no point trying anything else.
+	 *
+	 * 0x80 is used as a nonsense port to prevent against false
+	 * positives due to ISA bus float.  The assumption is that
+	 * 0x80 is a non-existent port; which should be safe since
+	 * include/asm/io.h also makes this assumption.
+	 */
+
+	scratch = inb(IER1_8251F);
+	outb( 0, IER1_8251F);
+	scratch2 = inb(IER1_8251F);
+	outb( scratch, IER1_8251F);
+
+	if (scratch2) {
+		restore_flags(flags);
+		return;	 /* We failed; there's nothing here */
+	}
+
+	/*
+	 * If the AUTO_IRQ flag is set, try to do the automatic IRQ
+	 * detection.
+	 */
+/*	if (state->flags & ASYNC_AUTO_IRQ){
+	  state->irq = do_auto_irq(info);
+	  }
+*/
+	out_8251_lcr(info, 0x6E);
+	state->type = PORT_8251;
+
+	state->xmit_fifo_size = uart_config[state->type].dfl_xmit_fifo_size;
+
+	if (state->type == PORT_UNKNOWN) {
+		restore_flags(flags);
+		return;
+	}
+
+#ifdef CONFIG_RESOURCE98
+	request_region(info->port, COM1_EXTENT1, "serial(auto)");
+/*	request_region(info->port+4, COM1_EXTENT2, "serial(auto2)");*/
+#endif
+	request_region(info->port+0x100, COM1_EXTENT3, "serial(auto3)");
+
+	/*
+	 * Reset the UART.
+	 */
+
+	info->MCR &= ~(UART_MCR_DTR | UART_MCR_RTS);
+	cmd_out_8251(info);
+	outb(0xDD, COMMAND_8251F);    /*  ~00100010b  ~00110010b */
+	inb(state->port + PORT_8251_DATA);
+	
+	restore_flags(flags);
+}
+
+static void out_8251_lcr(struct async_struct *info, int mode)
+{
+	udelay(10);
+	outb( COMMAND_8251F_DUMMY, COMMAND_8251F);
+	udelay(10);
+	outb( COMMAND_8251F_DUMMY, COMMAND_8251F);
+	udelay(10);
+	outb( COMMAND_8251F_DUMMY, COMMAND_8251F);
+	udelay(10);
+	outb( COMMAND_8251F_RESET, COMMAND_8251F);
+	udelay(10);
+	outb(                mode, COMMAND_8251F);
+	udelay(100);
+}
+
+static int startup8251(struct async_struct * info)
+{
+	unsigned long flags;
+	int     retval=0;
+	void (*handler)(int, void *, struct pt_regs *);
+	struct serial_state *state= info->state;
+	unsigned long page;
+
+	page = get_free_page(GFP_KERNEL);
+	if (!page)
+		return -ENOMEM;
+
+	save_flags(flags); cli();
+
+	if (info->flags & ASYNC_INITIALIZED) {
+		free_page(page);
+		goto errout;
+	}
+	if (!state->port || !state->type) {
+		if (info->tty)
+			set_bit(TTY_IO_ERROR, &info->tty->flags);
+		free_page(page);
+		goto errout;
+	}
+	if (info->xmit.buf)
+		free_page(page);
+	else
+		info->xmit.buf = (unsigned char *) page;
+
+#ifdef SERIAL_DEBUG_OPEN
+	printk("starting up ttys%d (irq %d)...", info->line, state->irq);
+#endif
+
+	if (uart_config[info->state->type].flags & UART_STARTECH) {
+		/* Wake up UART */
+		out_8251_lcr(info, 0xFC);       /* 0x6E */
+		outb( 0, IER1_8251F);
+		out_8251_lcr(info,  0);
+	}
+	
+	/*
+	 * Allocate the IRQ if necessary
+	 */
+	if (state->irq && (!IRQ_ports[state->irq] ||
+			   !IRQ_ports[state->irq]->next_port)) {
+		if (IRQ_ports[state->irq]) {
+			retval = -EBUSY;
+		}
+		handler = rs_interrupt_8251;
+		retval = request_irq(state->irq, handler, SA_SHIRQ /* IRQ_T(state) */,
+				     "serial(8251)", NULL);
+		if (retval) {
+			if (suser()) {
+				if (info->tty)
+					set_bit(TTY_IO_ERROR,
+						&info->tty->flags);
+				retval = 0;
+			}
+			goto errout;
+		}
+	}
+
+	/*
+	 * Insert serial port into IRQ chain.
+	 */
+	info->prev_port = 0;
+	info->next_port = IRQ_ports[state->irq];
+	if (info->next_port)
+		info->next_port->prev_port = info;
+	IRQ_ports[state->irq] = info;
+	figure_IRQ_timeout(state->irq);
+
+	/*
+	 * Clear the interrupt registers.
+	 */
+	/* (void) serial_inp(info, UART_LSR); */   /* (see above) */
+
+	(void) inb(0x30);
+	(void) inb(0x32);  /* 0x32 */
+
+	/*
+	 * Now, initialize the UART 
+	 */
+
+	info->cmd8251 = 0;
+	out_8251_lcr(info, 0x6E);
+
+	info->MCR = 0;
+	if (info->tty->termios->c_cflag & CBAUD)
+		info->MCR = UART_MCR_DTR | UART_MCR_RTS;
+
+	info->MCR = UART_MCR_DTR | UART_MCR_RTS;
+	cmd_out_8251(info);
+	
+	/*
+	 * Finally, enable interrupts
+	 */
+
+	info->IER = UART_IER_THRI | UART_IER_RLSI | UART_IER_RDI;
+	ier_out(info);  /* enable interrupts */
+	
+	/*
+	 * And clear the interrupt registers again for luck.
+	 */
+
+	(void)inb(0x32);
+	(void)inb(0x30);
+
+	if (info->tty)
+		clear_bit(TTY_IO_ERROR, &info->tty->flags);
+	info->xmit.head = info->xmit.tail = 0;
+
+	/*
+	 * Set up serial timers...
+	 */
+	mod_timer (&serial_timer, jiffies + 2*HZ/100);
+
+	/*
+	 * and set the speed of the serial port
+	 */
+	change_speed(info, 0);
+	info->flags |= ASYNC_INITIALIZED;
+	restore_flags(flags);
+	return 0;
+	
+ errout:
+	restore_flags(flags);
+	return retval;
+}
+
+static void cmd_out_8251(struct async_struct *info)
+{
+	if(info->MCR & UART_MCR_DTR){
+		info->cmd8251|=2;
+	}else{
+		info->cmd8251&=253;
+	}
+	if(info->MCR & UART_MCR_RTS){
+		info->cmd8251|=32;
+	}else{
+		info->cmd8251&=223;
+	}
+#if 0
+	printk("8251cmd(0x%x) 8255MCR(0x%x)\n",info->cmd8251,info->MCR);
+#endif
+	outb(info->cmd8251,COMMAND_8251F);
+}
+
+static void ier_out(struct async_struct *info)
+{
+	if(info->line==0){
+#if 0
+		printk("IER  changed(0x%x.8255IER)!\n",info->IER);
+#endif
+		if(info->IER &(UART_IER_RLSI|UART_IER_RDI)){
+			outb_p(INTR_8251_RXRE,IER1_8251F_COUT);
+		}else{
+			outb_p(		0,IER1_8251F_COUT);
+		}
+		if(info->IER &UART_IER_THRI){
+			outb_p(INTR_8251_RXRE | INTR_8251_TXEE,IER1_8251F_COUT);
+			outb_p(INTR_8251_RXRE | INTR_8251_TXRE,IER1_8251F_COUT);
+		}else{
+			outb_p(INTR_8251_TXEE,IER1_8251F_COUT);
+			outb_p(INTR_8251_TXRE,IER1_8251F_COUT);
+		}
+	}else{
+		serial_out(info,UART_IER,info->IER);
+	}
+}
+
+void mcr_out(struct async_struct *info)
+{
+	if(info->line){
+		serial_out(info,UART_MCR,info->MCR);
+		return ;
+	}
+	cmd_out_8251(info);
+}
+
+static void rs_interrupt_8251(int irq, void *dev_id, struct pt_regs * regs)
+{
+	int status;
+	int pass_counter = 0;
+	struct async_struct * info;
+	
+	info = IRQ_ports[irq];
+
+	if (!info || !info->tty)
+		return;
+	do {
+		status =inb(0x32);
+		if(status & STAT_8251_RXRDY){
+			receive_chars_8251(info,&status);
+		}
+		check_modem_status(info);
+		if(status & STAT_8251_TXRDY){
+			transmit_chars_8251(info,0);
+		}
+		if (pass_counter++ > RS_ISR_PASS_LIMIT) {
+			break;
+		}
+	}while(inb(0x32)& (STAT_8251_TXRDY | STAT_8251_RXRDY));
+	info->last_active = jiffies;
+}
+static void change_speed_8251(struct async_struct *info)
+{
+	int baud_base;
+	unsigned cflag,mval = 0;
+	int i, bits;
+	unsigned long       flags;
+	int quot8251 =0 ;
+	cflag = info->tty->termios->c_cflag;    
+	/* byte size and parity */
+	switch (cflag & CSIZE) {
+	case CS5: mval = 0x00; bits = 7; break;
+	case CS6: mval = 0x04; bits = 8; break;
+	case CS7: mval = 0x08; bits = 9; break;
+	case CS8: mval = 0x0c; bits = 10; break;
+		/* Never happens, but GCC is too dumb to figure it out */
+	default:  mval = 0x00; bits = 7; break;
+	}
+	if (cflag & CSTOPB) {
+		mval |= 0x40;
+		bits++;
+	}
+	if (cflag & PARENB) {
+		mval |= 0x10;/*parity*/
+		bits++;
+	}
+	if (!(cflag & PARODD))
+		mval |= 0x20;/* even parity*/
+#ifndef CONFIG_PC9800
+#ifdef CMSPAR
+	if (cflag & CMSPAR)
+		cval |= UART_LCR_SPAR;
+#endif
+#endif
+	mval|=2;
+	/* Determine divisor based on baud rate */
+	i = cflag & CBAUD;
+	if (i & CBAUDEX) {
+		i &= ~CBAUDEX;
+		if (i < 1 || i > 4) 
+			info->tty->termios->c_cflag &= ~CBAUDEX;
+		else
+			i += 15;
+	}
+	if (i == 15) {
+		if ((info->flags & ASYNC_SPD_MASK) == ASYNC_SPD_HI)
+			i += 1;
+		if ((info->flags & ASYNC_SPD_MASK) == ASYNC_SPD_VHI)
+			i += 2;
+		if ((info->flags & ASYNC_SPD_MASK) == ASYNC_SPD_SHI)
+			i += 3;
+		if ((info->flags & ASYNC_SPD_MASK) == ASYNC_SPD_WARP)
+			i += 4;
+		if ((info->flags & ASYNC_SPD_MASK) == ASYNC_SPD_CUST)
+			quot8251 = info->state->custom_divisor;
+	}
+	baud_base = info->state->baud_base;
+
+	if (!quot8251) {
+		quot8251=((system_clock) ?
+			  div_table_8251_8[i]:
+			  div_table_8251_5[i]);
+		if (!quot8251)
+			quot8251 = ((system_clock) ? 13 : 16);
+	}
+	printk(KERN_DEBUG "change_speed_8251(): i=%d, quot8251=%d\n",i,quot8251);
+
+	info->quot = quot8251;
+	/*   printk("quot8251=%d\n", quot8251);     */
+	/*				    not precise ....................*/
+	info->timeout = ((info->xmit_fifo_size*HZ*bits*quot8251) / baud_base);
+	info->timeout += HZ/50;	     /* Add .02 seconds of slop */
+
+	/* CTS flow control flag and modem status interrupts */
+	info->IER &= ~UART_IER_MSI;
+	if (info->flags & ASYNC_HARDPPS_CD)
+		info->IER |= UART_IER_MSI;
+	if (cflag & CRTSCTS) {
+		info->flags |= ASYNC_CTS_FLOW;
+		info->IER |= UART_IER_MSI;
+	} else
+		info->flags &= ~ASYNC_CTS_FLOW;
+	if (cflag & CLOCAL)
+		info->flags &= ~ASYNC_CHECK_CD;
+	else {
+		info->flags |= ASYNC_CHECK_CD;
+		info->IER |= UART_IER_MSI;
+	}
+	ier_out(info);
+	/*
+	 * Set up parity check flag
+	 */
+#define RELEVANT_IFLAG(iflag) (iflag & (IGNBRK|BRKINT|IGNPAR|PARMRK|INPCK))
+
+	info->read_status_mask = STAT_8251_OER | STAT_8251_TXEMP | STAT_8251_DSR;
+	if (I_INPCK(info->tty))
+		info->read_status_mask |= STAT_8251_FER | STAT_8251_PER;
+	if (I_BRKINT(info->tty) || I_PARMRK(info->tty))
+		info->read_status_mask |= STAT_8251_BRK;
+    
+	/*
+	 * Characters to ignore
+	 */
+	info->ignore_status_mask = 0;
+	if (I_IGNPAR(info->tty))
+		info->ignore_status_mask |= STAT_8251_PER | STAT_8251_FER;
+	if (I_IGNBRK(info->tty)) {
+		info->ignore_status_mask |= STAT_8251_BRK;
+		/*
+		 * If we're ignore parity and break indicators, ignore 
+		 * overruns too.  (For real raw support).
+		 */
+		if (I_IGNPAR(info->tty))
+			info->ignore_status_mask |= STAT_8251_OER;
+	}
+	/*
+	 * !!! ignore all characters if CREAD is not set
+	 */
+	if ((cflag & CREAD) == 0)
+		info->ignore_status_mask |= STAT_8251_DSR;
+	save_flags(flags);
+	cli();
+	out_8251_lcr(info,mval);
+	info->cmd8251=0x37;
+	cmd_out_8251(info);
+
+	outb_p(0xb6, 0x77);
+
+	outb_p(quot8251&0xff, 0x75);
+	outb_p(quot8251>>8, 0x75);
+
+	restore_flags(flags);
+}
+static void receive_chars_8251(struct async_struct *info, int *status)
+{
+	struct tty_struct *tty = info->tty;
+	unsigned char ch;
+	int ignored = 0;
+	struct      async_icount *icount;
+    
+	icount = &info->state->icount;
+	do {
+		ch = inb(0x30);
+		if (tty->flip.count >= TTY_FLIPBUF_SIZE)
+			break;
+		*tty->flip.char_buf_ptr = ch;
+		icount->rx++;
+		*tty->flip.flag_buf_ptr = 0;
+		if (*status & (STAT_8251_BRK | STAT_8251_PER |
+			       STAT_8251_FER | STAT_8251_OER)) {
+			/*
+			 * For statistics only
+			 */
+			if (*status & STAT_8251_BRK) {
+				*status &= ~(STAT_8251_FER |STAT_8251_PER);
+				icount->brk++;
+			} else if (*status & STAT_8251_PER)
+				icount->parity++;
+			else if (*status & STAT_8251_FER)
+				icount->frame++;
+			if (*status & STAT_8251_OER)
+				icount->overrun++;
+
+			/*
+			 * Now check to see if character should be
+			 * ignored, and mask off conditions which
+			 * should be ignored.
+			 */
+			if (*status & info->ignore_status_mask) {
+				if (++ignored > 100)
+					break;
+				goto ignore_char;
+			}
+			*status &= info->read_status_mask;
+
+			if (*status & (STAT_8251_BRK)) {
+				*tty->flip.flag_buf_ptr = TTY_BREAK;
+				if (info->flags & ASYNC_SAK)
+					do_SAK(tty);
+			} else if (*status & STAT_8251_PER)
+				*tty->flip.flag_buf_ptr = TTY_PARITY;
+			else if (*status & STAT_8251_FER)
+				*tty->flip.flag_buf_ptr = TTY_FRAME;
+			if (*status & STAT_8251_OER) {
+				/*
+				 * Overrun is special, since it's
+				 * reported immediately, and doesn't
+				 * affect the current character
+				 */
+				if (tty->flip.count < TTY_FLIPBUF_SIZE) {
+					tty->flip.count++;
+					tty->flip.flag_buf_ptr++;
+					tty->flip.char_buf_ptr++;
+					*tty->flip.flag_buf_ptr = TTY_OVERRUN;
+				}
+			}
+		}
+		tty->flip.flag_buf_ptr++;
+		tty->flip.char_buf_ptr++;
+		tty->flip.count++;
+	ignore_char:
+		*status = inb(0x32);
+	} while (*status & STAT_8251_RXRDY);
+	queue_task(&tty->flip.tqueue, &tq_timer);
+}
+
+static void transmit_chars_8251(struct async_struct *info, int *intr_done)
+{
+	int count;
+
+	if (info->x_char) {
+		outb( info->x_char,0x30);
+		info->state->icount.tx++;
+		info->x_char = 0;
+		if (intr_done)
+			*intr_done = 0;
+		return;
+	}
+	if (info->xmit.head == info->xmit.tail
+	    || info->tty->stopped
+	    || info->tty->hw_stopped) {
+		info->IER &= ~UART_IER_THRI;
+		ier_out(info);
+		return;
+	}
+
+	count = info->xmit_fifo_size;
+	do {
+		outb( info->xmit.buf[info->xmit.tail] ,0x30);
+		info->xmit.tail = (info->xmit.tail + 1) & (SERIAL_XMIT_SIZE-1);
+		info->state->icount.tx++;
+		if (info->xmit.head == info->xmit.tail)
+			break;
+	} while (--count > 0);
+
+	if (CIRC_CNT (info->xmit.head,
+		      info->xmit.tail,
+		      SERIAL_XMIT_SIZE) < WAKEUP_CHARS)
+		rs_sched_event(info, RS_EVENT_WRITE_WAKEUP);
+	if (intr_done)
+		*intr_done = 0;
+
+	if (info->xmit.head == info->xmit.tail) {
+		info->IER &= ~UART_IER_THRI;
+		ier_out(info);
+	}
+
+}
+
+static int chk_temt(struct async_struct *info)
+{
+	if(info->line!=0){
+		return serial_inp(info,UART_LSR);
+	}
+	if(inb_p(info->port + PORT_8251_STS) & STAT_8251_TXEMP){
+		return UART_LSR_TEMT;
+	}
+	return 0;
+}
+static unsigned int msr_in(struct async_struct *info)
+{
+	unsigned int ms,st;
+	unsigned int tmp;
+
+	if(info->line){
+		return serial_in(info,UART_MSR);
+	}
+    
+	ms = inb_p(0x33);
+	st = inb_p(0x32);
+	info->msr8251=ms;
+
+	tmp=0;
+	if(!(ms & 32))
+		tmp|=UART_MSR_DCD;
+	if(!(ms & 128))
+		tmp|=UART_MSR_RI;
+	if(!(ms & 64))
+		tmp|=UART_MSR_CTS;
+	if(st & 128)
+		tmp|=UART_MSR_DSR;
+	return tmp;
+}
+
+static void begin_break_8251(struct async_struct *info)
+{
+	if (!info->port)
+		return;
+	cli();
+	info->cmd8251|=8;
+	cmd_out_8251(info);
+	sti();
+}
+
+static void end_break_8251(struct async_struct *info)
+{
+	if (!info->port)
+		return;
+	cli();
+	info->cmd8251&=247;
+	cmd_out_8251(info);
+	sti();
+}
+
+#endif /* CONFIG_PC9800 */
 
 /*
   Local variables:

@@ -34,6 +34,7 @@ if [ "$CONFIG_BLK_DEV_IDE" != "n" ]; then
 
    comment 'IDE chipset support/bugfixes'
    if [ "$CONFIG_BLK_DEV_IDE" != "n" ]; then
+      dep_bool '  DO NOT support PC-9800 series native IDE interface' CONFIG_BLK_DEV_NO_PC9800 $CONFIG_PC9800
       dep_bool '  CMD640 chipset bugfix/support' CONFIG_BLK_DEV_CMD640 $CONFIG_X86
       dep_bool '    CMD640 enhanced support' CONFIG_BLK_DEV_CMD640_ENHANCED $CONFIG_BLK_DEV_CMD640
       dep_bool '  ISA-PNP EIDE support' CONFIG_BLK_DEV_ISAPNP $CONFIG_ISAPNP
@@ -170,6 +171,10 @@ if [ "$CONFIG_IDE_CHIPSETS" = "y" -o \
    define_bool CONFIG_BLK_DEV_IDE_MODES y
 else
    define_bool CONFIG_BLK_DEV_IDE_MODES n
+fi
+
+if [ "$CONFIG_PC9800" = "y" -a "$CONFIG_BLK_DEV_NO_PC9800" != "y" ]; then
+   define_bool CONFIG_BLK_DEV_IDE_PC9800 y
 fi
 
 endmenu

@@ -110,7 +110,11 @@ extern unsigned long empty_zero_page[1024];
 #endif
 #endif
 
+#ifndef CONFIG_PC9800
 #define __beep() asm("movb $0x3,%al; outb %al,$0x61")
+#else
+#define __beep() asm("movb $0x6,%al; outb %al,$0x37")
+#endif
 
 #define PMD_SIZE	(1UL << PMD_SHIFT)
 #define PMD_MASK	(~(PMD_SIZE-1))

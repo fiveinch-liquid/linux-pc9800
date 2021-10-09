@@ -609,7 +609,14 @@ static int do_linuxrc(void * shell)
 
 	close(0);close(1);close(2);
 	setsid();
+#ifndef CONFIG_PC9800
 	(void) open("/dev/console",O_RDWR,0);
+#else
+	/* =PC9800 FAILSAFE=
+	   To continue w/o console is VERY DANGER! */
+	if(open("/dev/console",O_RDWR,0) != 0)
+		panic("Unable to open an initial console.\n");
+#endif
 	(void) dup(0);
 	(void) dup(0);
 	return execve(shell, argv, envp_init);
@@ -787,8 +794,15 @@ static int init(void * unused)
 	free_initmem();
 	unlock_kernel();
 
+#ifndef CONFIG_PC9800
 	if (open("/dev/console", O_RDWR, 0) < 0)
 		printk("Warning: unable to open an initial console.\n");
+#else
+	/* =PC9800 FAILSAFE=
+	   To continue w/o console is VERY DANGER! */
+	if (open("/dev/console", O_RDWR, 0) != 0)
+		panic("Unable to open an initial console.\n");
+#endif
 
 	(void) dup(0);
 	(void) dup(0);

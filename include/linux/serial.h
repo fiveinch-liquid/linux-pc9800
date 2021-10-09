@@ -10,6 +10,8 @@
 #ifndef _LINUX_SERIAL_H
 #define _LINUX_SERIAL_H
 
+#include <linux/config.h>
+
 #ifdef __KERNEL__
 #include <asm/page.h>
 
@@ -75,12 +77,24 @@ struct serial_struct {
 #define PORT_16654	11
 #define PORT_16850	12
 #define PORT_RSA	13	/* RSA-DV II/S card */
+#ifndef CONFIG_PC9800
 #define PORT_MAX	13
+#else
+#define PORT_8251	14
+#define PORT_8251_19K	15
+#define PORT_8251_FIFO	16
+#define PORT_8251_VFAST	17
+#define PORT_MC16550II	18
+#define PORT_MAX	18
+#endif
 
 #define SERIAL_IO_PORT	0
 #define SERIAL_IO_HUB6	1
 #define SERIAL_IO_MEM	2
 #define SERIAL_IO_GSC	3
+
+#define SERIAL_IO_8251	4
+#define SERIAL_IO_MC16550II 5
 
 struct serial_uart_config {
 	char	*name;

@@ -34,6 +34,7 @@
 #include <unistd.h>
 #include <fcntl.h>
 #include <asm/boot.h>
+#include <linux/config.h>
 
 typedef unsigned char byte;
 typedef unsigned short word;
@@ -130,9 +131,14 @@ int main(int argc, char ** argv)
 	close (fd);
 
 	setup_sectors = (i + 511) / 512;	/* Pad unused space with zeros */
+#ifdef CONFIG_PC9800
+	if (!(setup_sectors & 1))
+		setup_sectors++;    /* setup_sectors must be odd on NEC PC-9800 */
+#else /* !CONFIG_PC9800 */
 	/* for compatibility with ancient versions of LILO. */
 	if (setup_sectors < SETUP_SECTS)
 		setup_sectors = SETUP_SECTS;
+#endif /* CONFIG_PC9800 */
 	fprintf(stderr, "Setup is %d bytes.\n", i);
 	memset(buf, 0, sizeof(buf));
 	while (i < setup_sectors * 512) {

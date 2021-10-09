@@ -305,13 +305,15 @@ static void sb16_set_mpu_port(sb_devc * devc, struct address_info *hw_config)
 	switch (hw_config->io_base)
 	{
 		case 0x300:
+#ifdef CONFIG_SB16_PC9800
+		case 0x80d2:
+#endif
 			sb_setmixer(devc, 0x84, bits | 0x04);
 			break;
 
 		case 0x330:
 			sb_setmixer(devc, 0x84, bits | 0x00);
 			break;
-
 		default:
 			sb_setmixer(devc, 0x84, bits | 0x02);		/* Disable MPU */
 			printk(KERN_ERR "SB16: Invalid MIDI I/O port %x\n", hw_config->io_base);
@@ -321,6 +323,26 @@ static void sb16_set_mpu_port(sb_devc * devc, struct address_info *hw_config)
 static int sb16_set_irq_hw(sb_devc * devc, int level)
 {
 	int ival;
+
+#ifdef CONFIG_SB16_PC9800
+	if (devc->type == MDL_SB16_PC9800)
+		switchh (level)
+		{
+		case 3:
+			ival = 1;
+			break;
+		case 5:
+			ival = 8;
+			break;
+		case 10:
+			ival = 2;
+			break;
+		default:
+			printk(KERN_ERR "SB16: Invalid IRQ%d\n", level);
+			return 0;
+		}
+	else
+#endif
 
 	switch (level)
 	{
@@ -340,6 +362,7 @@ static int sb16_set_irq_hw(sb_devc * devc, int level)
 			printk(KERN_ERR "SB16: Invalid IRQ%d\n", level);
 			return 0;
 	}
+
 	sb_setmixer(devc, IRQ_NR, ival);
 	return 1;
 }
@@ -518,7 +541,13 @@ int sb_dsp_detect(struct address_info *hw_config, int pci, int pciio, struct sb_
 	 */
 	
 	DDB(printk("sb_dsp_detect(%x) entered\n", hw_config->io_base));
+#ifndef CONFIG_SB16_PC9800
 	if (check_region(hw_config->io_base, 16))
+#else
+	if (hw_config->card_subtype == MDL_SB16_PC9800
+	    ? sb16_pc9800_check_region(hw_config->io_base, 16)
+	    : check_region(hw_config->io_base, 16))
+#endif
 	{
 #ifdef MODULE
 		printk(KERN_INFO "sb: I/O region in use.\n");
@@ -532,8 +561,11 @@ int sb_dsp_detect(struct address_info *hw_config, int pci, int pciio, struct sb_
 	devc->base = hw_config->io_base;
 	devc->irq = hw_config->irq;
 	devc->dma8 = hw_config->dma;
-
+#ifdef CONFIG_SB16_PC9800
+	devc->dma16 = hw_config->dma;
+#else
 	devc->dma16 = -1;
+#endif
 	devc->pcibase = pciio;
 	
 	if(pci == SB_PCI_ESSMAESTRO)
@@ -648,7 +680,6 @@ int sb_dsp_init(struct address_info *hw_config, struct module *owner)
 	char name[100];
 	extern int sb_be_quiet;
 	int	mixer22, mixer30;
-	
 /*
  * Check if we had detected a SB device earlier
  */
@@ -733,6 +764,11 @@ int sb_dsp_init(struct address_info *hw_config, struct module *owner)
 			}
 		}
 	}			/* IRQ setup */
+#ifdef CONFIG_SB16_PC9800
+	if (devc->type == MDL_SB16_PC9800)
+		sb16_pc9800_request_region(hw_config->io_base, "soundblaster");
+	else
+#endif
 	request_region(hw_config->io_base, 16, "soundblaster");
 
 	last_sb = devc;
@@ -796,6 +832,13 @@ int sb_dsp_init(struct address_info *hw_config, struct module *owner)
 				}
 				sb_setmixer(devc,0x30,mixer30);
 			}
+#ifdef CONFIG_SB16_PC9800
+			else if (devc->type == MDL_SB16_PC9800){
+				/* devc->submodel = SUBMDL_SB16_PC9800; */
+				if(hw_config->name == NULL)
+					hw_config->name = "Sound Blaster 16 (for PC-9800)";
+			}
+#endif
 			else if (hw_config->name == NULL)
 				hw_config->name = "Sound Blaster 16";
 
@@ -803,7 +846,9 @@ int sb_dsp_init(struct address_info *hw_config, struct module *owner)
 				devc->dma16 = devc->dma8;
 			else if (hw_config->dma2 < 5 || hw_config->dma2 > 7)
 			{
+#ifndef CONFIG_SB16_PC9800
 				printk(KERN_WARNING  "SB16: Bad or missing 16 bit DMA channel\n");
+#endif
 				devc->dma16 = devc->dma8;
 			}
 			else
@@ -811,7 +856,13 @@ int sb_dsp_init(struct address_info *hw_config, struct module *owner)
 
 			if(!sb16_set_dma_hw(devc)) {
 				free_irq(devc->irq, devc);
+#ifdef CONFIG_SB16_PC9800
+				if(devc->type == MDL_SB16_PC9800)
+					sb16_pc9800_release_region(hw_config->io_base);
+				else
+#endif
 			        release_region(hw_config->io_base, 16);
+
 				return 0;
 			}
 
@@ -900,9 +951,13 @@ void sb_dsp_unload(struct address_info *hw_config, int sbmpu)
 	{
 		if ((devc->model & MDL_ESS) && devc->pcibase)
 			release_region(devc->pcibase, 8);
+#ifdef CONFIG_SB16_PC9800
+		if(devc->type == MDL_SB16_PC9800)
+			sb16_pc9800_release_region(devc->base);
+		else
+#endif
 
 		release_region(devc->base, 16);
-
 		if (!(devc->caps & SB_NO_AUDIO))
 		{
 			sound_free_dma(devc->dma8);
@@ -1240,6 +1295,18 @@ int probe_sbmpu(struct address_info *hw_config, struct module *owner)
 	switch (devc->model)
 	{
 		case MDL_SB16:
+#ifdef CONFIG_SB16_PC9800
+			if (devc->type == MDL_SB16_PC9800)
+			{
+				if (hw_config->io_base != 0x80d2
+				    || hw_config->io_base != 0xc8d2)
+				{
+					printk (KERN_ERR "SB16: Invalid MIDI port %x\n", hw_config->io_base);
+					return 0;
+				}
+			}
+			else
+#endif
 			if (hw_config->io_base != 0x300 && hw_config->io_base != 0x330)
 			{
 				printk(KERN_ERR "SB16: Invalid MIDI port %x\n", hw_config->io_base);
@@ -1292,3 +1359,35 @@ EXPORT_SYMBOL(sb_be_quiet);
 EXPORT_SYMBOL(probe_sbmpu);
 EXPORT_SYMBOL(unload_sbmpu);
 EXPORT_SYMBOL(smw_free);
+
+#ifdef CONFIG_SB16_PC9800
+int sb16_pc9800_check_region(int ioaddr)
+{
+	int n;
+	for (n = 4; n < 7; n++)
+		if(check_region(ioaddr + n*0x100, 1))
+			return 0;
+	for (n = 10; n < 16; n++)
+		if(check_region(ioaddr + n*0x100, 1))
+			return 0;
+	return 1;
+}
+
+void sb16_pc9800_request_region(int ioaddr, const char *name)
+{
+	int n;
+	for (n = 4; n < 7; n++)
+		request_region(ioaddr + n*0x100, 1, name);
+	for (n = 10; n < 16; n++)
+		request_region(ioaddr + n*0x100, 1, name);
+}
+
+void sb16_pc9800_release_region(int ioaddr)
+{
+	int n;
+	for (n = 4; n < 7; n++)
+		release_region(ioaddr + n*0x100, 1);
+	for (n = 10; n < 16; n++)
+		release_region(ioaddr + n*0x100, 1);
+}
+#endif /* CONFIG_SB16_PC9800 */

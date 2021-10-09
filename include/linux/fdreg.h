@@ -6,9 +6,27 @@
  * Handbook", Sanches and Canton.
  */
 
+#include <linux/config.h>
+
+#ifdef CONFIG_PC9800
+#define FDPATCHES
+#endif
+
 #ifdef FDPATCHES
 
 #define FD_IOPORT fdc_state[fdc].address
+
+#ifdef CONFIG_PC9800
+
+/* Fd controller regs. S&C, about page 340 */
+#define FD_STATUS	(0 + FD_IOPORT )
+#define FD_DATA		(2 + FD_IOPORT )
+
+#define FD_MODE		(4 + FD_IOPORT )
+#define FD_MODE_CHANGE	0xbe
+#define FD_EMODE_CHANGE	0x4be
+
+#else /* !CONFIG_PC9800 */
 
 /* Fd controller regs. S&C, about page 340 */
 #define FD_STATUS	(4 + FD_IOPORT )
@@ -23,7 +41,13 @@
 /* Diskette Control Register (write)*/
 #define FD_DCR		(7 + FD_IOPORT )
 
+#endif /* CONFIG_PC9800 */
+
 #else
+
+#ifdef CONFIG_PC9800
+#error FDPATCHES must be defined for NEC PC-9800
+#endif
 
 #define FD_STATUS	0x3f4
 #define FD_DATA		0x3f5

@@ -11,6 +11,7 @@
 #define __ASM_I386_FLOPPY_H
 
 #include <linux/vmalloc.h>
+#include <linux/config.h>
 
 
 /*
@@ -282,9 +283,14 @@ struct fd_routine_l {
 };
 
 
+#ifdef CONFIG_PC9800
+static int FDC1 = 0x90;
+#else /* !CONFIG_PC9800 */
 static int FDC1 = 0x3f0;
+#endif /* CONFIG_PC9800 */
 static int FDC2 = -1;
 
+#ifdef CONFIG_PC9800
 /*
  * Floppy types are stored in the rtc's CMOS RAM and so rtc_lock
  * is needed to prevent corrupted CMOS RAM in case "insmod floppy"
@@ -307,11 +313,16 @@ static int FDC2 = -1;
 	spin_unlock_irqrestore(&rtc_lock, flags);	\
 	val;						\
 })
+#endif /* CONFIG_PC9800 */
 
 #define N_FDC 2
 #define N_DRIVE 8
 
+#ifdef CONFIG_PC9800
+#define FLOPPY_MOTOR_MASK 0x08
+#else
 #define FLOPPY_MOTOR_MASK 0xf0
+#endif /* CONFIG_PC9800 */
 
 #define AUTO_DMA
 

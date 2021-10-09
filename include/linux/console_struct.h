@@ -9,6 +9,8 @@
  * to achieve effects such as fast scrolling by changing the origin.
  */
 
+#include <linux/config.h>
+
 #define NPAR 16
 
 struct vc_data {
@@ -19,15 +21,28 @@ struct vc_data {
 	const struct consw *vc_sw;
 	unsigned short	*vc_screenbuf;		/* In-memory character/attribute buffer */
 	unsigned int	vc_screenbuf_size;
+#if  defined(CONFIG_PC9800) && defined(CONFIG_FB)
+	unsigned short	vc_attr;		/* Current attributes */
+#else
 	unsigned char	vc_attr;		/* Current attributes */
+#endif
 	unsigned char	vc_def_color;		/* Default colors */
 	unsigned char	vc_color;		/* Foreground & background */
 	unsigned char	vc_s_color;		/* Saved foreground & background */
 	unsigned char	vc_ulcolor;		/* Color for underline mode */
 	unsigned char	vc_halfcolor;		/* Color for half intensity mode */
+#ifdef CONFIG_GDC_CONSOLE
+	unsigned char	vc_def_attr;	/* Default attributes */
+	unsigned char	vc_ul_attr;	/* Attribute for underline mode */
+	unsigned char	vc_half_attr;	/* Attribute for half intensity mode */
+	unsigned char	vc_bold_attr;	/* Attribute for bold mode */
+#endif
 	unsigned short	vc_complement_mask;	/* [#] Xor mask for mouse pointer */
 	unsigned short	vc_hi_font_mask;	/* [#] Attribute set for upper 256 chars of font or 0 if not supported */
 	unsigned short	vc_video_erase_char;	/* Background erase character */
+#ifdef CONFIG_PC9800
+	unsigned short	vc_video_erase_attr;	/* Background erase attribute */
+#endif
 	unsigned short	vc_s_complement_mask;	/* Saved mouse pointer mask */
 	unsigned int	vc_x, vc_y;		/* Cursor position */
 	unsigned int	vc_top, vc_bottom;	/* Scrolling region */
@@ -81,6 +96,21 @@ struct vc_data {
 	struct vc_data **vc_display_fg;		/* [!] Ptr to var holding fg console for this display */
 	unsigned long	vc_uni_pagedir;
 	unsigned long	*vc_uni_pagedir_loc;  /* [!] Location of uni_pagedir variable for this console */
+#ifdef CONFIG_PC9800
+	unsigned char   vc_kanji_char1;
+	unsigned char   vc_kanji_mode;
+	unsigned char   vc_kanji_jis_mode;
+	unsigned char   vc_s_kanji_mode;
+	unsigned char   vc_s_kanji_jis_mode;
+	unsigned int    vc_translate_ex;
+	unsigned char   vc_G0_charset_ex;
+	unsigned char   vc_G1_charset_ex;
+	unsigned char   vc_saved_G0_ex;
+	unsigned char   vc_saved_G1_ex;
+# ifdef CONFIG_FB
+	unsigned short  vc_pc98_addbuf;
+# endif
+#endif /* CONFIG_PC9800 */
 	/* additional information is in vt_kern.h */
 };
 
@@ -104,6 +134,10 @@ extern struct vc vc_cons [MAX_NR_CONSOLES];
 #define CUR_HWMASK	0x0f
 #define CUR_SWMASK	0xfff0
 
+#ifndef CONFIG_PC9800
 #define CUR_DEFAULT CUR_UNDERLINE
+#else
+#define CUR_DEFAULT CUR_BLOCK
+#endif
 
 #define CON_IS_VISIBLE(conp) (*conp->vc_display_fg == conp)

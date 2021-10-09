@@ -7,6 +7,7 @@
  * Arbitrary resource management.
  */
 
+#include <linux/config.h>
 #include <linux/sched.h>
 #include <linux/errno.h>
 #include <linux/ioport.h>
@@ -14,6 +15,12 @@
 #include <linux/slab.h>
 #include <linux/spinlock.h>
 #include <asm/io.h>
+
+#ifdef CONFIG_PC9800
+/*
+#define RESOURCE98_DEBUG
+*/
+#endif
 
 struct resource ioport_resource = { "PCI IO", 0x0000, IO_SPACE_LIMIT, IORESOURCE_IO };
 struct resource iomem_resource = { "PCI mem", 0x00000000, 0xffffffff, IORESOURCE_MEM };
@@ -40,7 +47,13 @@ static char * do_resource_list(struct resource *entry, const char *fmt, int offs
 		if (!name)
 			name = "<BAD>";
 
+#ifdef CONFIG_PC9800
+		buf += sprintf(buf, fmt + offset, from, to,
+			       entry->flags & IORESOURCE98_SPARSE ? '*' : ' ',
+			       name);
+#else
 		buf += sprintf(buf, fmt + offset, from, to, name);
+#endif
 		if (entry->child)
 			buf = do_resource_list(entry->child, fmt, offset-2, buf, end);
 		entry = entry->sibling;
@@ -54,9 +67,15 @@ int get_resource_list(struct resource *root, char *buf, int size)
 	char *fmt;
 	int retval;
 
+#ifdef CONFIG_PC9800
+	fmt = "        %08lx-%08lx%c : %s\n";
+	if (root->end < 0x10000)
+		fmt = "        %04lx-%04lx%c : %s\n";
+#else
 	fmt = "        %08lx-%08lx : %s\n";
 	if (root->end < 0x10000)
 		fmt = "        %04lx-%04lx : %s\n";
+#endif
 	read_lock(&resource_lock);
 	retval = do_resource_list(root->child, fmt, 8, buf, buf + size) - buf;
 	read_unlock(&resource_lock);
@@ -70,6 +89,11 @@ static struct resource * __request_resource(struct resource *root, struct resour
 	unsigned long end = new->end;
 	struct resource *tmp, **p;
 
+#ifdef RESOURCE98_DEBUG
+	printk(KERN_DEBUG "request_resource(): new={%lx-%lx%c, \"%s\"}\n",
+	       new->start, new->end,
+	       (new->flags&IORESOURCE98_SPARSE) ? '*' : ' ', new->name);
+#endif
 	if (end < start)
 		return root;
 	if (start < root->start)
@@ -79,7 +103,23 @@ static struct resource * __request_resource(struct resource *root, struct resour
 	p = &root->child;
 	for (;;) {
 		tmp = *p;
-		if (!tmp || tmp->start > end) {
+#ifdef RESOURCE98_DEBUG
+		if (tmp)
+			printk (KERN_DEBUG "request_resource(): "
+				"compare {%lx-%lx%c,\"%s\"}\n",
+				tmp->start, tmp->end,
+				(tmp->flags & IORESOURCE98_SPARSE) ? '*' : ' ',
+				tmp->name);
+#endif
+		if (!tmp || tmp->start > end
+#ifdef CONFIG_PC9800
+		    || ((tmp->flags & IORESOURCE98_SPARSE
+			 || tmp->end == tmp->start)
+			&& (new->flags & IORESOURCE98_SPARSE || end == start)
+			&& ((start ^ tmp->start) & 1) != 0
+			&& (tmp->start > start))
+#endif
+			) {
 			new->sibling = tmp;
 			*p = new;
 			new->parent = root;
@@ -88,6 +128,13 @@ static struct resource * __request_resource(struct resource *root, struct resour
 		p = &tmp->sibling;
 		if (tmp->end < start)
 			continue;
+#ifdef CONFIG_PC9800
+		if ((tmp->flags & IORESOURCE98_SPARSE
+		     || tmp->end == tmp->start)
+		    && (new->flags & IORESOURCE98_SPARSE || end == start)
+		    && ((start ^ tmp->start) & 1) != 0)
+			continue;
+#endif
 		return tmp;
 	}
 }
@@ -222,8 +269,15 @@ struct resource * __request_region(struct resource *parent, unsigned long start,
 		memset(res, 0, sizeof(*res));
 		res->name = name;
 		res->start = start;
-		res->end = start + n - 1;
 		res->flags = IORESOURCE_BUSY;
+#ifdef CONFIG_PC9800
+		if ((long) n < 0) {
+			n = -n;
+			if (n > 1)
+				res->flags |= IORESOURCE98_SPARSE;
+		}
+#endif
+		res->end = start + n - 1;
 
 		write_lock(&resource_lock);
 
@@ -266,8 +320,17 @@ void __release_region(struct resource *parent, unsigned long start, unsigned lon
 {
 	struct resource **p;
 	unsigned long end;
+#ifdef CONFIG_PC9800
+	unsigned long sparse_flag = 0;
+#endif
 
 	p = &parent->child;
+#ifdef CONFIG_PC9800
+	if ((long)n < 0) {
+		n = -n;
+		sparse_flag = IORESOURCE98_SPARSE;
+	}
+#endif
 	end = start + n - 1;
 
 	for (;;) {
@@ -275,11 +338,25 @@ void __release_region(struct resource *parent, unsigned long start, unsigned lon
 
 		if (!res)
 			break;
+#ifdef RESOURCE98_DEBUG
+		printk(KERN_DEBUG
+		       "__release_region(): compare {%lx-%lx%c,\"%s\"}\n",
+		       res->start, res->end,
+		       (res->flags & IORESOURCE98_SPARSE) ? '*' : ' ',
+		       res->name);
+#endif
 		if (res->start <= start && res->end >= end) {
 			if (!(res->flags & IORESOURCE_BUSY)) {
 				p = &res->child;
 				continue;
 			}
+#ifdef CONFIG_PC9800
+			if ((res->flags & IORESOURCE98_SPARSE) ^ sparse_flag) {
+				/* Sparseness does not match. */
+				p = &res->sibling;
+				continue;
+			}
+#endif
 			if (res->start != start || res->end != end)
 				break;
 			*p = res->sibling;
@@ -315,6 +392,13 @@ static int __init reserve_setup(char *str)
 			res->end = io_start + io_num - 1;
 			res->flags = IORESOURCE_BUSY;
 			res->child = NULL;
+#ifdef CONFIG_PC9800
+			if (io_num < 0) {
+				res->end = io_start - io_num - 1;
+				if (io_num < -1)
+					res->flags |= IORESOURCE98_SPARSE;
+			}
+#endif
 			if (request_resource(res->start >= 0x10000 ? &iomem_resource : &ioport_resource, res) == 0)
 				reserved = x+1;
 		}

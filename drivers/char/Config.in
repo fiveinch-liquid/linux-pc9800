@@ -23,6 +23,12 @@ if [ "$CONFIG_SERIAL_EXTENDED" = "y" ]; then
    bool '  Autodetect IRQ on standard ports (unsafe)' CONFIG_SERIAL_DETECT_IRQ
    bool '  Support special multiport boards' CONFIG_SERIAL_MULTIPORT
    bool '  Support the Bell Technologies HUB6 card' CONFIG_HUB6
+   bool '  Support MC16550II' CONFIG_MC16550II
+   if [ "$CONFIG_MC16550II" = "y" ]; then
+      comment '    MC16550II COM2, COM3 '
+      int '    MC16550II shared IRQ (3, 5, 6, 12)' CONFIG_MC16550II_IRQ 3
+      hex '    MC16550II base address (d0,d2,d4,d6,d8,da,dc,de)' CONFIG_MC16550II_BASE d2
+   fi
 fi
 bool 'Non-standard serial port support' CONFIG_SERIAL_NONSTANDARD
 if [ "$CONFIG_SERIAL_NONSTANDARD" = "y" ]; then
@@ -72,6 +78,9 @@ if [ "$CONFIG_FOOTBRIDGE" = "y" ]; then
       bool '  Console on DC21285 serial port' CONFIG_SERIAL_21285_CONSOLE
    fi
 fi
+if [ "$CONFIG_PC9800" = "y" ]; then
+   tristate 'PC-9800 8251-based primary serial port support (EXPERIMENTAL)' CONFIG_SERIAL_CCU98
+fi
 bool 'Unix98 PTY support' CONFIG_UNIX98_PTYS
 if [ "$CONFIG_UNIX98_PTYS" = "y" ]; then
    int 'Maximum number of Unix98 PTYs in use (0-2048)' CONFIG_UNIX98_PTY_COUNT 256
@@ -83,6 +92,12 @@ if [ "$CONFIG_PARPORT" != "n" ]; then
    fi
    dep_tristate 'Support for user-space parallel port device drivers' CONFIG_PPDEV $CONFIG_PARPORT
 fi
+if [ "$CONFIG_PC9800" = "y" -a "$CONFIG_PARPORT" != "y" ]; then
+   tristate 'NEC PC-9800 old-style printer port support' CONFIG_PC9800_OLDLP
+   if [ "$CONFIG_PC9800_OLDLP" != "n" ]; then
+      bool '   Support for console on line printer' CONFIG_PC9800_OLDLP_CONSOLE
+   fi
+fi
 
 source drivers/i2c/Config.in
 
@@ -90,12 +105,17 @@ mainmenu_option next_comment
 comment 'Mice'
 tristate 'Bus Mouse Support' CONFIG_BUSMOUSE
 if [ "$CONFIG_BUSMOUSE" != "n" ]; then
+if [ "$CONFIG_PC9800" = "y" ]; then
+   define_tristate CONFIG_LOGIBUSMOUSE $CONFIG_BUSMOUSE
+   define_bool CONFIG_LOGIBUSMOUSE_PC9800 y
+else
    dep_tristate '  ATIXL busmouse support' CONFIG_ATIXL_BUSMOUSE $CONFIG_BUSMOUSE
    dep_tristate '  Logitech busmouse support' CONFIG_LOGIBUSMOUSE $CONFIG_BUSMOUSE
    dep_tristate '  Microsoft busmouse support' CONFIG_MS_BUSMOUSE $CONFIG_BUSMOUSE
    if [ "$CONFIG_ADB" = "y" -a "$CONFIG_ADB_KEYBOARD" = "y" ]; then
       dep_tristate '  Apple Desktop Bus mouse support (old driver)' CONFIG_ADBMOUSE $CONFIG_BUSMOUSE
    fi
+fi
 fi
 
 tristate 'Mouse Support (not serial and bus mice)' CONFIG_MOUSE

@@ -54,6 +54,26 @@ static const char version2[] =
 #include <linux/etherdevice.h>
 #include "8390.h"
 
+/* backword compatibility for kernel version 2.1.57 */
+#include <linux/version.h>
+#ifndef LINUX_VERSION_CODE
+#warning LINUX_VERSION_CODE is no defined!
+#endif
+#if LINUX_VERSION_CODE < 0x20200
+#ifdef CONFIG_PCI
+#undef CONFIG_PCI
+#endif
+#ifdef CONFIG_PC98
+#define CONFIG_PC9800
+#endif
+#define mdelay(n) ({unsigned long msec=(n); while (msec--) udelay(1000);})
+#endif
+
+#ifdef CONFIG_NET_CBUS
+#undef ei_debug
+#define ei_debug 9
+#endif /* CONFIG_NET_CBUS */
+
 /* Some defines that people can play with if so inclined. */
 
 /* Do we support clones that don't adhere to 14,15 of the SAprom ? */
@@ -69,10 +89,12 @@ static const char version2[] =
 /* #define PACKETBUF_MEMSIZE	0x40 */
 
 /* A zero-terminated list of I/O addresses to be probed at boot. */
+#ifndef CONFIG_NET_CBUS
 #ifndef MODULE
 static unsigned int netcard_portlist[] __initdata = {
 	0x300, 0x280, 0x320, 0x340, 0x360, 0x380, 0
 };
+#endif
 #endif
 
 static struct isapnp_device_id isapnp_clone_list[] __initdata = {
@@ -91,6 +113,7 @@ MODULE_DEVICE_TABLE(isapnp, isapnp_clone_list);
 /* A list of bad clones that we none-the-less recognize. */
 static struct { const char *name8, *name16; unsigned char SAprefix[4];}
 bad_clone_list[] __initdata = {
+#ifndef CONFIG_NET_CBUS
     {"DE100", "DE200", {0x00, 0xDE, 0x01,}},
     {"DE120", "DE220", {0x00, 0x80, 0xc8,}},
     {"DFI1000", "DFI2000", {'D', 'F', 'I',}}, /* Original, eh?  */
@@ -105,26 +128,54 @@ bad_clone_list[] __initdata = {
     {"PCM-4823", "PCM-4823", {0x00, 0xc0, 0x6c}}, /* Broken Advantech MoBo */
     {"REALTEK", "RTL8019", {0x00, 0x00, 0xe8}}, /* no-name with Realtek chip */
     {"LCS-8834", "LCS-8836", {0x04, 0x04, 0x37}}, /* ShinyNet (SET) */
+#else /* CONFIG_NET_CBUS */
+    {"LA/T-98?","LA/T-98", {0x00,0xa0,0xb0}},  /* I/O Data */
+    {"EGY-98?","EGY-98", {0x00,0x40,0x26}}, /* Melco EGY98 */
+    {"ICM?","ICM-27xx-ET", {0x00,0x80,0xc8}}, /* ICM IF-27xx-ET */
+    {"CNET-98/EL?","CNET(98)E/L", {0x00,0x80,0x4C}}, /* Contec CNET-98/EL */
+#endif
     {0,}
 };
 #endif
 
 /* ---- No user-serviceable parts below ---- */
 
+#define NE_SHIFT(x) EI_SHIFT(x)
 #define NE_BASE	 (dev->base_addr)
-#define NE_CMD	 	0x00
-#define NE_DATAPORT	0x10	/* NatSemi-defined port window offset. */
-#define NE_RESET	0x1f	/* Issue a read to reset, a write to clear. */
+#define NE_CMD	 	NE_SHIFT(0x00)
+#define NE_DATAPORT	NE_SHIFT(0x10)	/* NatSemi-defined port window offset. */
+#ifndef CONFIG_NET_CBUS
+#define NE_RESET	NE_SHIFT(0x1f) /* Issue a read to reset, a write to clear. */
+#else
+#define NE_RESET	NE_SHIFT(0x11) /* Issue a read to reset, a write to clear. */
+#endif
+
 #define NE_IO_EXTENT	0x20
 
 #define NE1SM_START_PG	0x20	/* First page of TX buffer */
 #define NE1SM_STOP_PG 	0x40	/* Last page +1 of RX ring */
 #define NESM_START_PG	0x40	/* First page of TX buffer */
 #define NESM_STOP_PG	0x80	/* Last page +1 of RX ring */
+#ifdef CONFIG_NE2K_CBUS_CNET98EL
+#ifndef CONFIG_NE2K_CBUS_CNET98EL_IO_BASE
+#warning CONFIG_NE2K_CBUS_CNET98EL_IO_BASE is not defined(config error?)
+#warning use 0xaaed as default
+#define CONFIG_NE2K_CBUS_CNET98EL_IO_BASE 0xaaed /* or 0x55ed */
+#endif
+#define CNET98EL_START_PG 0x00
+#define CNET98EL_STOP_PG 0x40
+#endif
+
+#ifdef CONFIG_NET_CBUS
+#include "ne2k_cbus.h"
+#endif
 
 int ne_probe(struct net_device *dev);
 static int ne_probe1(struct net_device *dev, int ioaddr);
 static int ne_probe_isapnp(struct net_device *dev);
+#ifdef CONFIG_NET_CBUS
+static int ne_probe_cbus(struct net_device *dev, const struct ne2k_cbus_hwinfo *hw, int ioaddr);
+#endif
 
 static int ne_open(struct net_device *dev);
 static int ne_close(struct net_device *dev);
@@ -159,6 +210,8 @@ static void ne_block_output(struct net_device *dev, const int count,
 	E2010	 starts at 0x100 and ends at 0x4000.
 	E2010-x starts at 0x100 and ends at 0xffff.  */
 
+#ifndef CONFIG_NET_CBUS
+
 int __init ne_probe(struct net_device *dev)
 {
 	unsigned int base_addr = dev->base_addr;
@@ -186,6 +239,95 @@ int __init ne_probe(struct net_device *dev)
 
 	return -ENODEV;
 }
+
+#else /* CONFIG_NET_CBUS */
+
+int __init ne_probe(struct net_device *dev)
+{
+	unsigned int base_addr = dev->base_addr;
+
+	SET_MODULE_OWNER(dev);
+
+	if(ei_debug > 2)
+		printk(KERN_DEBUG "ne_probe(): entered.\n");
+
+	/* If CONFIG_NET_CBUS,
+	   we need dev->priv->reg_offset BEFORE to probe */
+	if(ne2k_cbus_init(dev)!=0){
+		return -ENOMEM;
+	}
+
+	/* First check any supplied i/o locations. User knows best. <cough> */
+	if(base_addr > 0) {
+		int result;
+		const struct ne2k_cbus_hwinfo *hw = ne2k_cbus_get_hwinfo((int)(dev->mem_start & NE2K_CBUS_HARDWARE_TYPE_MASK));
+
+		if(ei_debug > 2)
+			printk(KERN_DEBUG "ne_probe(): call ne_probe_cbus(base_addr=0x%x)\n",base_addr);
+
+		result = ne_probe_cbus(dev, hw, base_addr);
+		if (result != 0)
+			ne2k_cbus_destroy(dev);
+
+		return result;
+	}
+
+	if(ei_debug > 2)
+		printk(KERN_DEBUG "ne_probe(): base_addr is not specified.\n");
+
+#ifndef MODULE
+	/* Last resort. The semi-risky C-Bus auto-probe. */
+	if(ei_debug > 2)
+		printk(KERN_DEBUG "ne_probe(): auto-probe start.\n");
+
+	{
+		const struct ne2k_cbus_hwinfo *hw = ne2k_cbus_get_hwinfo((int)(dev->mem_start & NE2K_CBUS_HARDWARE_TYPE_MASK));
+
+		if(hw&&hw->hwtype){
+			const unsigned short *plist;
+			for(plist=hw->portlist; *plist; plist++){
+				const struct ne2k_cbus_region *rlist;
+				for(rlist = hw->regionlist; rlist->range; rlist++){
+					if (check_region(*plist+rlist->start, rlist->range))
+						break;
+				}
+				if(rlist->range){
+					/* check_region() failed */ 
+					continue; /* try next base port */
+				}
+				/* check_region() succeeded */
+				if (ne_probe_cbus(dev,hw,*plist) == 0)
+					return 0;
+			}
+		}else{
+			for(hw = &ne2k_cbus_hwinfo_list[0]; hw->hwtype; hw++) {
+				const unsigned short *plist;
+				for(plist=hw->portlist; *plist; plist++){
+					const struct ne2k_cbus_region *rlist;
+
+					for(rlist = hw->regionlist; rlist->range; rlist++){
+						if (check_region(*plist+rlist->start, rlist->range))
+							break;
+					}
+					if(rlist->range){
+						/* check_region() failed */ 
+						continue; /* try next base port */
+					}
+					/* check_region() succeeded */
+					if (ne_probe_cbus(dev,hw,*plist) == 0)
+						return 0;
+				}
+			}
+		}
+	}
+#endif
+
+	ne2k_cbus_destroy(dev);
+
+	return -ENODEV;
+}
+
+#endif /* CONFIG_NET_CBUS */
 
 static int __init ne_probe_isapnp(struct net_device *dev)
 {
@@ -228,41 +370,115 @@ static int __init ne_probe_isapnp(struct net_device *dev)
 	return -ENODEV;
 }
 
+#ifdef CONFIG_NET_CBUS
+static int __init ne_probe_cbus(struct net_device *dev, const struct ne2k_cbus_hwinfo *hw, int ioaddr)
+{
+	if(ei_debug > 2)
+		printk(KERN_DEBUG "ne_probe_cbus(): entered. (called from %p)\n",
+		       __builtin_return_address (0));
+
+	if(hw && hw->hwtype){
+		ne2k_cbus_set_hwtype(dev,hw,ioaddr);
+		return ne_probe1(dev,ioaddr);
+	}else{
+		/* auto detect */
+
+		printk(KERN_DEBUG "ne_probe_cbus(): try to determine hardware types.\n");
+		for(hw=&ne2k_cbus_hwinfo_list[0]; hw->hwtype; hw++){
+			ne2k_cbus_set_hwtype(dev,hw,ioaddr);
+			if(ne_probe1(dev,ioaddr)==0)
+				return 0;
+		}
+	}
+	return ENODEV;
+}
+#endif /* CONFIG_NET_CBUS */
+
 static int __init ne_probe1(struct net_device *dev, int ioaddr)
 {
 	int i;
 	unsigned char SA_prom[32];
+#ifndef CONFIG_NET_CBUS /* if CONFIG_NET_CBUS, wordlength is always 2! */
 	int wordlength = 2;
+#endif
 	const char *name = NULL;
 	int start_page, stop_page;
+#ifndef CONFIG_NET_CBUS
 	int neX000, ctron, copam, bad_card;
+#else
+	int neX000, bad_card;
+#endif
 	int reg0, ret;
 	static unsigned version_printed;
+#ifdef CONFIG_NET_CBUS
+	const struct ne2k_cbus_hwinfo *hw = ne2k_cbus_get_hwinfo((int)(dev->mem_start & NE2K_CBUS_HARDWARE_TYPE_MASK));
+	struct ei_device *ei_local = (struct ei_device *)(dev->priv);
+#endif
+
+#ifdef CONFIG_NET_CBUS
+	if(ei_debug > 2){
+		printk(KERN_DEBUG "ne_probe1(): entered\n"
+			   "ioaddr=0x%x, hardware_type = %d(%s)\n"
+			   "ei_local->reg_offset = \n"
+			   "{ 0x%04x, 0x%04x, 0x%04x, 0x%04x, 0x%04x, 0x%04x, 0x%04x, 0x%04x, \n"
+			   "  0x%04x, 0x%04x, 0x%04x, 0x%04x, 0x%04x, 0x%04x, 0x%04x, 0x%04x, \n"
+			   "  0x%04x, 0x%04x }\n",
+			   ioaddr, hw->hwtype, hw->hwident,
+			   ei_local->reg_offset[0] , ei_local->reg_offset[1],
+			   ei_local->reg_offset[2] , ei_local->reg_offset[3],
+			   ei_local->reg_offset[4] , ei_local->reg_offset[5],
+			   ei_local->reg_offset[6] , ei_local->reg_offset[7],
+			   ei_local->reg_offset[8] , ei_local->reg_offset[9],
+			   ei_local->reg_offset[10], ei_local->reg_offset[11],
+			   ei_local->reg_offset[12], ei_local->reg_offset[13],
+			   ei_local->reg_offset[14], ei_local->reg_offset[15],
+			   ei_local->reg_offset[16], ei_local->reg_offset[17]);
+	}
+#endif
+
+#ifdef CONFIG_NE2K_CBUS_CNET98EL
+	if(hw->hwtype==NE2K_CBUS_HARDWARE_TYPE_CNET98EL){
+		outb_p( 0, CONFIG_NE2K_CBUS_CNET98EL_IO_BASE);
+		/* udelay(5000);	*/
+		outb_p( 1, CONFIG_NE2K_CBUS_CNET98EL_IO_BASE);
+		/* udelay(5000);	*/
+		outb_p( (ioaddr & 0xf000) >> 8 | 0x08 | 0x01, CONFIG_NE2K_CBUS_CNET98EL_IO_BASE +2);
+		/* udelay(5000); */
+	}
+#endif
 
 	if (!request_region(ioaddr, NE_IO_EXTENT, dev->name))
 		return -EBUSY;
 
-	reg0 = inb_p(ioaddr);
+	reg0 = inb_p(ioaddr+NE_SHIFT(0));
 	if (reg0 == 0xFF) {
 		ret = -ENODEV;
 		goto err_out;
 	}
 
 	/* Do a preliminary verification that we have a 8390. */
+#ifdef CONFIG_NE2K_CBUS_CNET98EL
+	if(hw->hwtype!=NE2K_CBUS_HARDWARE_TYPE_CNET98EL)
+#endif
 	{
 		int regd;
 		outb_p(E8390_NODMA+E8390_PAGE1+E8390_STOP, ioaddr + E8390_CMD);
-		regd = inb_p(ioaddr + 0x0d);
-		outb_p(0xff, ioaddr + 0x0d);
+		regd = inb_p(ioaddr+NE_SHIFT(0x0d));
+		outb_p(0xff, ioaddr+NE_SHIFT(0x0d));
 		outb_p(E8390_NODMA+E8390_PAGE0, ioaddr + E8390_CMD);
 		inb_p(ioaddr + EN0_COUNTER0); /* Clear the counter by reading. */
 		if (inb_p(ioaddr + EN0_COUNTER0) != 0) {
 			outb_p(reg0, ioaddr);
-			outb_p(regd, ioaddr + 0x0d);	/* Restore the old values. */
+			outb_p(regd, ioaddr+NE_SHIFT(0x0d)); /* Restore the old values. */
 			ret = -ENODEV;
 			goto err_out;
 		}
 	}
+
+#ifdef CONFIG_NET_CBUS
+	if(ei_debug > 2)
+		printk(KERN_DEBUG "ne_probe1(): 8390 verification passed.\n");
+#endif
 
 	if (ei_debug  &&  version_printed++ == 0)
 		printk(KERN_INFO "%s" KERN_INFO "%s", version1, version2);
@@ -282,6 +498,11 @@ static int __init ne_probe1(struct net_device *dev, int ioaddr)
 	{
 		unsigned long reset_start_time = jiffies;
 
+#ifdef CONFIG_NET_CBUS
+		/* derived from CNET98EL-patch for bad clones */
+		outb_p(E8390_NODMA | E8390_STOP, ioaddr+E8390_CMD);
+#endif
+
 		/* DON'T change these to inb_p/outb_p or reset will fail on clones. */
 		outb(inb(ioaddr + NE_RESET), ioaddr + NE_RESET);
 
@@ -300,15 +521,130 @@ static int __init ne_probe1(struct net_device *dev, int ioaddr)
 		outb_p(0xff, ioaddr + EN0_ISR);		/* Ack all intr. */
 	}
 
+#ifdef CONFIG_NE2K_CBUS_ICM
+#if 0 /* obsoleted */
+	if(hw->hwtype == NE2K_CBUS_HARDWARE_TYPE_ICM){
+		static const char pat[32] ="AbcdeFghijKlmnoPqrstUvwxyZ789012";
+		char buf[sizeof(pat)];
+		int maxwait = 200;
+
+		if(ei_debug>2){
+			printk(" [ICM-specific initialize...");
+		}
+
+		inb(ioaddr + EN0_ISR);
+		outb_p(E8390_RXOFF, ioaddr+EN0_RXCR);
+		outb_p(0x1|0x40|0x8, ioaddr+EN0_DCFG); /* ENDCFG_WTS|ENDCFG_FT1|ENDCFG_LS */
+		outb_p(16384/256, ioaddr+EN0_STARTPG);
+		outb_p(32768/256, ioaddr+EN0_STOPPG);
+		ne2k_cbus_writemem(dev, ioaddr, 16384, pat, sizeof(pat));
+		while((inb(ioaddr+EN0_ISR) & ENISR_RDC) != ENISR_RDC
+			  && --maxwait)
+			;
+		if(ei_debug>2){
+			printk("write pat...");
+		}
+		ne2k_cbus_readmem(dev, ioaddr, 16384, buf, sizeof(pat));
+		if(ei_debug>2){
+			printk("read pat...");
+		}
+		if(memcmp(pat, buf, sizeof(pat))) {
+			if(ei_debug>2){
+				printk("compare failed.)");
+			}
+			printk(" memory failure\n");
+			return ENODEV;
+		}
+		if(ei_debug>2){
+			printk("compare ok...");
+		}
+		ne2k_cbus_readmem(dev, ioaddr, 0, SA_prom, 32);
+		outb(0xff, ioaddr+EN0_ISR);
+		printk("done)");
+	}
+	else
+#endif
+#endif /* CONFIG_NE2K_CBUS_ICM */
+#ifdef CONFIG_NE2K_CBUS_CNET98EL
+	if(hw->hwtype == NE2K_CBUS_HARDWARE_TYPE_CNET98EL){
+		static const char pat[32] ="AbcdeFghijKlmnoPqrstUvwxyZ789012";
+		char buf[32];
+		int maxwait = 200;
+
+		if(ei_debug>2){
+			printk(" [CNET98EL-specific initialize...");
+		}
+		outb_p(E8390_NODMA | E8390_STOP, ioaddr+E8390_CMD); /* 0x20|0x1 */
+		i=inb(ioaddr);
+		if (( i & ~0x2) != (0x20 | 0x01))
+			return ENODEV;
+		if (( inb(ioaddr + 0x7) & 0x80) != 0x80)
+			return ENODEV;
+		outb_p(E8390_RXOFF, ioaddr+EN0_RXCR); /* out(ioaddr+0xc, 0x20) */
+		/* outb_p(ENDCFG_WTS|ENDCFG_FT1|ENDCFG_LS, ioaddr+EN0_DCFG); */
+		outb_p(ENDCFG_WTS|0x48 ,ioaddr+EN0_DCFG); /* 0x49 */
+		outb_p(CNET98EL_START_PG,ioaddr+EN0_STARTPG);
+		outb_p(CNET98EL_STOP_PG,ioaddr+EN0_STOPPG);
+		if(ei_debug>2){
+			printk("memory check");
+		}
+		for(i=0;i<65536; i+=1024){
+			if(ei_debug>2){
+				printk(" %04x",i);
+			}
+			ne2k_cbus_writemem(dev,ioaddr, i, pat, 32);
+			while(((inb(ioaddr+EN0_ISR)&ENISR_RDC) != ENISR_RDC) && --maxwait)
+				;
+			ne2k_cbus_readmem(dev,ioaddr, i, buf, 32);
+			if(memcmp(pat, buf, 32)) {
+				if(ei_debug>2){
+					printk(" failed.");
+				}
+				break;
+			}
+		}
+		if (i != 16384 ){
+			if(ei_debug>2){
+				printk("] ");
+			}
+			printk("memory failure at %x\n", i);
+			return ENODEV;
+		}
+		if(ei_debug>2){
+			printk(" good...");
+		}
+		if(!dev->irq){
+			if(ei_debug>2){
+				printk("] ");
+			}
+			printk("IRQ must be specified for C-NET(98)E/L. probe failed.\n");
+			return ENODEV;
+		}
+		outb((dev->irq>5)?(dev->irq&4):(dev->irq>>1), ioaddr+(0x2|0x400));
+		outb(0x7e, ioaddr+(0x4|0x400));
+		ne2k_cbus_readmem(dev, ioaddr, 16384, SA_prom, 32);
+		outb(0xff, ioaddr+EN0_ISR);
+		if(ei_debug>2){
+			printk("done]");
+		}
+	}else
+#endif /* CONFIG_NE2K_CBUS_CNET98EL */
 	/* Read the 16 bytes of station address PROM.
 	   We must first initialize registers, similar to NS8390_init(eifdev, 0).
 	   We can't reliably read the SAPROM address without this.
 	   (I learned the hard way!). */
 	{
-		struct {unsigned char value, offset; } program_seq[] =
+		struct {unsigned char value; unsigned short offset; } program_seq[] = 
 		{
 			{E8390_NODMA+E8390_PAGE0+E8390_STOP, E8390_CMD}, /* Select page 0*/
+#ifndef CONFIG_NET_CBUS
 			{0x48,	EN0_DCFG},	/* Set byte-wide (0x48) access. */
+#else
+			/* NEC PC-9800: some board can only handle word-wide access? */
+			{0x48|ENDCFG_WTS,	EN0_DCFG},	/* Set word-wide (0x48) access. */
+			{16384/256, EN0_STARTPG},
+			{32768/256, EN0_STOPPG},
+#endif
 			{0x00,	EN0_RCNTLO},	/* Clear the count regs. */
 			{0x00,	EN0_RCNTHI},
 			{0x00,	EN0_IMR},	/* Mask completion irq. */
@@ -322,17 +658,44 @@ static int __init ne_probe1(struct net_device *dev, int ioaddr)
 			{E8390_RREAD+E8390_START, E8390_CMD},
 		};
 
-		for (i = 0; i < sizeof(program_seq)/sizeof(program_seq[0]); i++)
-			outb_p(program_seq[i].value, ioaddr + program_seq[i].offset);
+#ifdef CONFIG_NET_CBUS
+		if(ei_debug > 2){
+			printk(" [outb_p");
+		}
+#endif
 
-	}
+		for (i = 0; i < sizeof(program_seq)/sizeof(program_seq[0]); i++)
+#ifdef CONFIG_NET_CBUS
+		{
+			if(ei_debug > 2)
+				printk("(0x%x,0x%x)",program_seq[i].value, ioaddr + program_seq[i].offset);
+#endif
+			outb_p(program_seq[i].value, ioaddr + program_seq[i].offset);
+#ifdef CONFIG_NET_CBUS
+		}
+		if(ei_debug > 2)
+			printk("]");
+#endif
+#ifndef CONFIG_NET_CBUS
 	for(i = 0; i < 32 /*sizeof(SA_prom)*/; i+=2) {
 		SA_prom[i] = inb(ioaddr + NE_DATAPORT);
 		SA_prom[i+1] = inb(ioaddr + NE_DATAPORT);
 		if (SA_prom[i] != SA_prom[i+1])
 			wordlength = 1;
 	}
+#else
+	insw(ioaddr+NE_DATAPORT, SA_prom, 32>>1);
+#endif
 
+	}
+
+	if(ei_debug>2){
+		printk("[SA_prom[]={ ");
+		for(i=0;i<32;i++) printk("%02x ",SA_prom[i]);
+		printk("}]");
+	}
+
+#ifndef CONFIG_NET_CBUS
 	if (wordlength == 2)
 	{
 		for (i = 0; i < 16; i++)
@@ -345,8 +708,24 @@ static int __init ne_probe1(struct net_device *dev, int ioaddr)
 		start_page = NE1SM_START_PG;
 		stop_page = NE1SM_STOP_PG;
 	}
+#else
+	for (i = 0; i < 16; i++)
+		SA_prom[i] = SA_prom[i+i];
+#ifdef CONFIG_NE2K_CBUS_CNET98EL
+	if(hw->hwtype==NE2K_CBUS_HARDWARE_TYPE_CNET98EL){
+		start_page = CNET98EL_START_PG;
+		stop_page = CNET98EL_STOP_PG;
+	}else{
+#endif
+		start_page = NESM_START_PG;
+		stop_page = NESM_STOP_PG;
+#ifdef CONFIG_NE2K_CBUS_CNET98EL
+	}
+#endif
+#endif
 
 	neX000 = (SA_prom[14] == 0x57  &&  SA_prom[15] == 0x57);
+#ifndef CONFIG_NET_CBUS
 	ctron =  (SA_prom[0] == 0x00 && SA_prom[1] == 0x00 && SA_prom[2] == 0x1d);
 	copam =  (SA_prom[14] == 0x49 && SA_prom[15] == 0x00);
 
@@ -360,6 +739,11 @@ static int __init ne_probe1(struct net_device *dev, int ioaddr)
 		start_page = 0x01;
 		stop_page = (wordlength == 2) ? 0x40 : 0x20;
 	}
+#else
+	if (neX000){
+		name = "NE2000-compat";
+	}
+#endif
 	else
 	{
 #ifdef SUPPORT_NE_BAD_CLONES
@@ -371,12 +755,16 @@ static int __init ne_probe1(struct net_device *dev, int ioaddr)
 				SA_prom[1] == bad_clone_list[i].SAprefix[1] &&
 				SA_prom[2] == bad_clone_list[i].SAprefix[2])
 			{
+#ifndef CONFIG_NET_CBUS
 				if (wordlength == 2)
 				{
 					name = bad_clone_list[i].name16;
 				} else {
 					name = bad_clone_list[i].name8;
 				}
+#else
+				name = bad_clone_list[i].name16;
+#endif
 				break;
 			}
 		}
@@ -384,6 +772,12 @@ static int __init ne_probe1(struct net_device *dev, int ioaddr)
 		{
 			printk(" not found (invalid signature %2.2x %2.2x).\n",
 				SA_prom[14], SA_prom[15]);
+#ifdef CONFIG_NET_CBUS
+			if(ei_debug>2){
+				printk(KERN_DEBUG "PROM prefix is: %2.2x %2.2x %2.2x\n",
+					   SA_prom[0], SA_prom[1], SA_prom[2]);
+			}
+#endif
 			ret = -ENXIO;
 			goto err_out;
 		}
@@ -406,10 +800,18 @@ static int __init ne_probe1(struct net_device *dev, int ioaddr)
 		dev->irq = probe_irq_off(cookie);
 		if (ei_debug > 2)
 			printk(" autoirq is %d\n", dev->irq);
-	} else if (dev->irq == 2)
+	} else
+#ifndef CONFIG_PC9800
+	if (dev->irq == 2)
 		/* Fixup for users that don't know that IRQ 2 is really IRQ 9,
 		   or don't know which one to set. */
 		dev->irq = 9;
+#else
+	if (dev->irq == 7)
+		/* Fixup for users that don't know that IRQ 7 is really IRQ 11,
+		   or don't know which one to set. */
+		dev->irq = 11;
+#endif
 
 	if (! dev->irq) {
 		printk(" failed to detect IRQ line.\n");
@@ -440,13 +842,22 @@ static int __init ne_probe1(struct net_device *dev, int ioaddr)
 		dev->dev_addr[i] = SA_prom[i];
 	}
 
+#ifndef CONFIG_NET_CBUS
 	printk("\n%s: %s found at %#x, using IRQ %d.\n",
 		dev->name, name, ioaddr, dev->irq);
+#else
+	printk("\n%s: %s found at %#x, hardware type %d(%s), using IRQ %d.\n",
+		   dev->name, name, ioaddr, hw->hwtype, hw->hwident, dev->irq);
+#endif
 
 	ei_status.name = name;
 	ei_status.tx_start_page = start_page;
 	ei_status.stop_page = stop_page;
+#ifndef CONFIG_NET_CBUS
 	ei_status.word16 = (wordlength == 2);
+#else
+	ei_status.word16 = (2 == 2); /* wordlength is always 2 */
+#endif
 
 	ei_status.rx_start_page = start_page + TX_PAGES;
 #ifdef PACKETBUF_MEMSIZE
@@ -465,8 +876,12 @@ static int __init ne_probe1(struct net_device *dev, int ioaddr)
 	return 0;
 
 err_out_kfree:
+#ifndef CONFIG_NET_CBUS
 	kfree(dev->priv);
 	dev->priv = NULL;
+#else
+	ne2k_cbus_destroy(dev);
+#endif
 err_out:
 	release_region(ioaddr, NE_IO_EXTENT);
 	return ret;
@@ -492,9 +907,17 @@ static int ne_close(struct net_device *dev)
 static void ne_reset_8390(struct net_device *dev)
 {
 	unsigned long reset_start_time = jiffies;
+#ifdef CONFIG_NET_CBUS
+	struct ei_device *ei_local = (struct ei_device *)(dev->priv);
+#endif
 
 	if (ei_debug > 1)
 		printk(KERN_DEBUG "resetting the 8390 t=%ld...", jiffies);
+
+#ifdef CONFIG_NET_CBUS
+	/* derived from CNET98EL-patch for bad clones... */
+	outb_p(E8390_NODMA|E8390_STOP, NE_BASE+E8390_CMD);  /* 0x20 | 0x1 */
+#endif
 
 	/* DON'T change these to inb_p/outb_p or reset will fail on clones. */
 	outb(inb(NE_BASE + NE_RESET), NE_BASE + NE_RESET);
@@ -518,6 +941,9 @@ static void ne_reset_8390(struct net_device *dev)
 static void ne_get_8390_hdr(struct net_device *dev, struct e8390_pkt_hdr *hdr, int ring_page)
 {
 	int nic_base = dev->base_addr;
+#ifdef CONFIG_NET_CBUS
+	struct ei_device *ei_local = (struct ei_device *)(dev->priv);
+#endif
 
 	/* This *shouldn't* happen. If it does, it's the last thing you'll see */
 
@@ -560,6 +986,9 @@ static void ne_block_input(struct net_device *dev, int count, struct sk_buff *sk
 #endif
 	int nic_base = dev->base_addr;
 	char *buf = skb->data;
+#ifdef CONFIG_NET_CBUS
+	struct ei_device *ei_local = (struct ei_device *)(dev->priv);
+#endif
 
 	/* This *shouldn't* happen. If it does, it's the last thing you'll see */
 	if (ei_status.dmaing)
@@ -570,6 +999,15 @@ static void ne_block_input(struct net_device *dev, int count, struct sk_buff *sk
 		return;
 	}
 	ei_status.dmaing |= 0x01;
+
+#ifdef CONFIG_NET_CBUS
+	/* derived from ICM-patch */
+	/* round up count to a word */
+	if(count&1) {
+	    count++;
+	}
+#endif
+
 	outb_p(E8390_NODMA+E8390_PAGE0+E8390_START, nic_base+ NE_CMD);
 	outb_p(count & 0xff, nic_base + EN0_RCNTLO);
 	outb_p(count >> 8, nic_base + EN0_RCNTHI);
@@ -626,6 +1064,9 @@ static void ne_block_output(struct net_device *dev, int count,
 	unsigned long dma_start;
 #ifdef NE_SANITY_CHECK
 	int retries = 0;
+#endif
+#ifdef CONFIG_NET_CBUS
+	struct ei_device *ei_local = (struct ei_device *)(dev->priv);
 #endif
 
 	/* Round the count up for word writes.  Do we need to do this?
@@ -738,6 +1179,12 @@ MODULE_PARM_DESC(io, "NEx000 I/O base address(es),required");
 MODULE_PARM_DESC(irq, "NEx000 IRQ number(s)");
 MODULE_PARM_DESC(bad, "NEx000 accept bad clone(s)");
 
+#ifdef CONFIG_PC9800
+static int hwtype[MAX_NE_CARDS] = { 0, }; /* board type */
+MODULE_PARM(hwtype, "1-" __MODULE_STRING(MAX_NE_CARDS) "i");
+MODULE_PARM_DESC(hwtype, "C-Bus NEx000 hardware type");
+#endif
+
 /* This is set up so that no ISA autoprobe takes place. We can't guarantee
 that the ne2k probe is the last 8390 based probe to take place (as it
 is at boot) and so the probe will get confused by any other 8390 cards.
@@ -752,6 +1199,9 @@ int init_module(void)
 		dev->irq = irq[this_dev];
 		dev->mem_end = bad[this_dev];
 		dev->base_addr = io[this_dev];
+#ifdef CONFIG_PC9800
+		dev->mem_start = hwtype[this_dev];
+#endif
 		dev->init = ne_probe;
 		if (register_netdev(dev) == 0) {
 			found++;
@@ -776,14 +1226,30 @@ void cleanup_module(void)
 	for (this_dev = 0; this_dev < MAX_NE_CARDS; this_dev++) {
 		struct net_device *dev = &dev_ne[this_dev];
 		if (dev->priv != NULL) {
+#ifndef CONFIG_NET_CBUS
 			void *priv = dev->priv;
+#endif
 			struct pci_dev *idev = (struct pci_dev *)ei_status.priv;
 			if (idev)
 				idev->deactivate(idev);
 			free_irq(dev->irq, dev);
+#ifndef CONFIG_NET_CBUS
 			release_region(dev->base_addr, NE_IO_EXTENT);
+#else /* CONFIG_NET_CBUS */
+			{
+				const struct ne2k_cbus_hwinfo *hw = ne2k_cbus_get_hwinfo((int)(dev->mem_start & NE2K_CBUS_HARDWARE_TYPE_MASK));
+				const struct ne2k_cbus_region *rlist;
+				for(rlist = hw->regionlist; rlist->range; rlist++){
+					release_region(dev->base_addr + rlist->start, rlist->range);
+				}
+			}
+#endif /* !CONFIG_NET_CBUS */
 			unregister_netdev(dev);
+#ifndef CONFIG_NET_CBUS
 			kfree(priv);
+#else
+			ne2k_cbus_destroy(dev);
+#endif
 		}
 	}
 }

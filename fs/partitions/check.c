@@ -27,11 +27,13 @@
 #include "atari.h"
 #include "mac.h"
 #include "msdos.h"
+#include "nec98.h"
 #include "osf.h"
 #include "sgi.h"
 #include "sun.h"
 #include "ibm.h"
 #include "ultrix.h"
+#include "x68000.h"
 
 extern int *blk_size[];
 
@@ -41,6 +43,9 @@ int warn_no_part = 1; /*This is ugly: should make genhd removable media aware*/
 static int (*check_part[])(struct gendisk *hd, kdev_t dev, unsigned long first_sect, int first_minor) = {
 #ifdef CONFIG_ACORN_PARTITION
 	acorn_partition,
+#endif
+#ifdef CONFIG_NEC98_PARTITION
+	nec98_partition,	/* must be come before `msdos_partition' */
 #endif
 #ifdef CONFIG_MSDOS_PARTITION
 	msdos_partition,
@@ -68,6 +73,9 @@ static int (*check_part[])(struct gendisk *hd, kdev_t dev, unsigned long first_s
 #endif
 #ifdef CONFIG_IBM_PARTITION
 	ibm_partition,
+#endif
+#ifdef CONFIG_X68K_PARTITION
+	x68k_partition,
 #endif
 	NULL
 };

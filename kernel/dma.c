@@ -10,6 +10,7 @@
  *   assumption introduced because of those /proc/dma patches. -- Hennus]
  */
 
+#include <linux/config.h>
 #include <linux/kernel.h>
 #include <linux/errno.h>
 #include <linux/spinlock.h>
@@ -59,10 +60,12 @@ static struct dma_chan dma_chan_busy[MAX_DMA_CHANNELS] = {
 	{ 0, 0 },
 	{ 0, 0 },
 	{ 0, 0 },
+#ifndef CONFIG_PC9800
 	{ 1, "cascade" },
 	{ 0, 0 },
 	{ 0, 0 },
 	{ 0, 0 }
+#endif
 };
 
 int get_dma_list(char *buf)

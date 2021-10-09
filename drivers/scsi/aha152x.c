@@ -210,11 +210,17 @@
  *
  *
  **************************************************************************
+
+ **************************************************************************
+ * FIX for PC-9800
+ * KITAGAWA Takurou, Kouseke Nakatsuka & Linux/98 Project
+ **************************************************************************
  
  see README.aha152x for configuration details
 
  **************************************************************************/
 
+#include <linux/config.h>
 #include <linux/module.h>
 
 #if defined(PCMCIA)
@@ -310,11 +316,20 @@
 #if defined(PCMCIA)
 #define IRQ_MIN 0
 #define IRQ_MAX 16
+#elif defined(CONFIG_PC9800)
+#define IRQ_MIN 2
+#define IRQ_MAX 7
 #else
 #define IRQ_MIN 9
 #define IRQ_MAX 12
 #endif
 #define IRQS    IRQ_MAX-IRQ_MIN+1
+
+#ifdef CONFIG_PC9800
+#define IRQ_DEFAULT 5
+#else
+#define IRQ_DEFAULT 11
+#endif
 
 enum {
 	not_issued	= 0x0001,	/* command not yet issued */
@@ -368,11 +383,11 @@ static int exttrans[] = {0, 0};
 #if !defined(AHA152X_DEBUG)
 MODULE_PARM(aha152x, "1-8i");
 MODULE_PARM_DESC(aha152x, "parameters for first controller");
-static int aha152x[] = {0, 11, 7, 1, 1, 0, DELAY_DEFAULT, 0};
+static int aha152x[] = {0, IRQ_DEFAULT, 7, 1, 1, 0, DELAY_DEFAULT, 0};
 
 MODULE_PARM(aha152x1, "1-8i");
 MODULE_PARM_DESC(aha152x1, "parameters for second controller");
-static int aha152x1[] = {0, 11, 7, 1, 1, 0, DELAY_DEFAULT, 0};
+static int aha152x1[] = {0, IRQ_DEFAULT, 7, 1, 1, 0, DELAY_DEFAULT, 0};
 #else
 MODULE_PARM(debug, "1-2i");
 MODULE_PARM_DESC(debug, "flags for driver debugging");
@@ -380,11 +395,11 @@ static int debug[] = {DEBUG_DEFAULT, DEBUG_DEFAULT};
 
 MODULE_PARM(aha152x, "1-9i");
 MODULE_PARM_DESC(aha152x, "parameters for first controller");
-static int aha152x[]   = {0, 11, 7, 1, 1, 1, DELAY_DEFAULT, 0, DEBUG_DEFAULT};
+static int aha152x[]   = {0, IRQ_DEFAULT, 7, 1, 1, 1, DELAY_DEFAULT, 0, DEBUG_DEFAULT};
 
 MODULE_PARM(aha152x1, "1-9i");
 MODULE_PARM_DESC(aha152x1, "parameters for second controller");
-static int aha152x1[]  = {0, 11, 7, 1, 1, 1, DELAY_DEFAULT, 0, DEBUG_DEFAULT};
+static int aha152x1[]  = {0, IRQ_DEFAULT, 7, 1, 1, 1, DELAY_DEFAULT, 0, DEBUG_DEFAULT};
 #endif /* !defined(AHA152X_DEBUG) */
 
 #ifdef __ISAPNP__
@@ -526,8 +541,10 @@ struct aha152x_hostdata {
 	int data_len;
 		/* number of sent/received bytes in dataphase */
 
+#ifndef CONFIG_PC9800
 	unsigned long io_port0;
 	unsigned long io_port1;
+#endif
 };
 
 
@@ -585,8 +602,13 @@ struct aha152x_scdata {
 #define PARITY			(HOSTDATA(shpnt)->parity)
 #define SYNCHRONOUS		(HOSTDATA(shpnt)->synchronous)
 
+#ifndef CONFIG_PC9800
 #define HOSTIOPORT0		(HOSTDATA(shpnt)->io_port0)
 #define HOSTIOPORT1		(HOSTDATA(shpnt)->io_port1)
+#else
+#define HOSTIOPORT0		(shpnt->io_port)
+#define HOSTIOPORT1		(shpnt->io_port)
+#endif
 
 #define SCDATA(SCpnt)		((struct aha152x_scdata *) (SCpnt)->host_scribble)
 #define SCNEXT(SCpnt)		SCDATA(SCpnt)->next
@@ -667,8 +689,13 @@ static void show_queues(struct Scsi_Host *shpnt);
 static void disp_enintr(struct Scsi_Host *shpnt);
 
 /* possible i/o addresses for the AIC-6260; default first */
+#ifndef CONFIG_PC9800
 static unsigned short ports[] = { 0x340, 0x140 };
+#else
+static unsigned short ports[] = { 0x1840, 0x3840 };
+#endif
 #define PORT_COUNT (sizeof(ports) / sizeof(unsigned short))
+#define PORT_DEFAULT (ports[0])
 
 #if !defined(SKIP_BIOSTEST)
 /* possible locations for the Adaptec BIOS; defaults first */
@@ -699,6 +726,10 @@ static struct signature {
 	int sig_length;
 } signatures[] =
 {
+#ifdef CONFIG_PC9800
+	{ "NEC BIOS:PC-9801-100",	0x005c, 20 },
+		/* NEC PC-9801-100 & its compatible */
+#endif
 	{ "Adaptec AHA-1520 BIOS",	0x102e, 21 },
 		/* Adaptec 152x */
 	{ "Adaptec AHA-1520B",		0x000b, 17 },
@@ -812,12 +843,12 @@ void aha152x_setup(char *str, int *ints)
 	}
 
 	setup[setup_count].conf        = str;
-	setup[setup_count].io_port     = ints[0] >= 1 ? ints[1] : 0x340;
-	setup[setup_count].irq         = ints[0] >= 2 ? ints[2] : 11;
+	setup[setup_count].io_port     = ints[0] >= 1 ? ints[1] : PORT_DEFAULT;
+	setup[setup_count].irq         = ints[0] >= 2 ? ints[2] : IRQ_DEFAULT;
 	setup[setup_count].scsiid      = ints[0] >= 3 ? ints[3] : 7;
 	setup[setup_count].reconnect   = ints[0] >= 4 ? ints[4] : 1;
 	setup[setup_count].parity      = ints[0] >= 5 ? ints[5] : 1;
-	setup[setup_count].synchronous = ints[0] >= 6 ? ints[6] : 1;
+	setup[setup_count].synchronous = ints[0] >= 6 ? ints[6] : 0 /* FIXME: 1 */ ;
 	setup[setup_count].delay       = ints[0] >= 7 ? ints[7] : DELAY_DEFAULT;
 	setup[setup_count].ext_trans   = ints[0] >= 8 ? ints[8] : 0;
 #if defined(AHA152X_DEBUG)
@@ -1161,7 +1192,25 @@ int aha152x_detect(Scsi_Host_Template * tpnt)
 				conf.cf_port =
 				    (GETPORT(ports[i] + O_PORTA) << 8) + GETPORT(ports[i] + O_PORTB);
 
+#ifdef CONFIG_PC9800
+				switch(conf.cf_irq) {
+				case 0:
+				case 3:
+					setup[setup_count].irq       = 6;
+					break;
+				case 1:
+					setup[setup_count].irq       = 3;
+					break;
+				case 2:
+					setup[setup_count].irq       = 5;
+					break;
+				default:
+					setup[setup_count].irq       = IRQ_DEFAULT;
+					break;
+				}
+#else
 				setup[setup_count].irq = IRQ_MIN + conf.cf_irq;
+#endif
 				setup[setup_count].scsiid = conf.cf_id;
 				setup[setup_count].reconnect = conf.cf_tardisc;
 				setup[setup_count].parity = !conf.cf_parity;
@@ -1218,6 +1267,7 @@ int aha152x_detect(Scsi_Host_Template * tpnt)
 		shpnt->n_io_port = IO_RANGE;
 		shpnt->irq       = setup[i].irq;
 
+#ifndef CONFIG_PC9800
 		if(!setup[i].tc1550) {
 			HOSTIOPORT0 = setup[i].io_port;
 			HOSTIOPORT1 = setup[i].io_port;
@@ -1225,6 +1275,7 @@ int aha152x_detect(Scsi_Host_Template * tpnt)
 			HOSTIOPORT0 = setup[i].io_port+0x10;
 			HOSTIOPORT1 = setup[i].io_port-0x10;
 		}
+#endif
 
 		ISSUE_SC	= 0;
 		CURRENT_SC	= 0;
@@ -1789,9 +1840,9 @@ int aha152x_host_reset(Scsi_Cmnd * SCpnt)
 	return SUCCESS;
 }
 
+#ifndef CONFIG_PC9800
 /*
  * Return the "logical geometry"
- *
  */
 int aha152x_biosparam(Scsi_Disk * disk, kdev_t dev, int *info_array)
 {
@@ -1838,6 +1889,7 @@ int aha152x_biosparam(Scsi_Disk * disk, kdev_t dev, int *info_array)
 
 	return 0;
 }
+#endif /* CONFIG_PC9800 */
 
 /*
  *  Internal done function

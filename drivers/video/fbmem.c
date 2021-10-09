@@ -120,6 +120,8 @@ extern int stifb_init(void);
 extern int stifb_setup(char*);
 extern int radeonfb_init(void);
 extern int radeonfb_setup(char*);
+extern int egcfb_init(void);
+extern int egcfb_setup(char*);
 extern int e1355fb_init(void);
 extern int e1355fb_setup(char*);
 extern int pvr2fb_init(void);
@@ -262,6 +264,9 @@ static struct {
 #ifdef CONFIG_FB_SA1100
 	{ "sa1100", sa1100fb_init, NULL },
 #endif
+#ifdef CONFIG_FB_EGC
+	{ "egc", egcfb_init, egcfb_setup },
+#endif
 #ifdef CONFIG_FB_SUN3
 	{ "sun3", sun3fb_init, sun3fb_setup },
 #endif
@@ -354,6 +359,34 @@ fb_read(struct file *file, char *buf, size_t count, loff_t *ppos)
 		return -ENODEV;
 
 	fb->fb_get_fix(&fix,PROC_CONSOLE(info), info);
+#ifdef CONFIG_PC9800
+	if (! strcmp( fix.id, "egc")) {
+		/* for PC-98x1 VRAM */
+		unsigned long total_copy_size = 0;
+		/* R,G,B plane */
+		if(p < 96*1024) {
+			unsigned long copy_size
+			    = count + p <= 96 * 1024 ? count : 96 * 1024 - p;
+			if (copy_to_user (buf, phys_to_virt (0xA8000+p),
+					  copy_size))
+				return -EFAULT;
+			count -= copy_size;
+			p += copy_size;
+			buf += copy_size;
+			total_copy_size += copy_size;
+		}
+		if(p >= 96*1024 && count > 0) {
+			unsigned long copy_size
+			    = count + p <= 128*1024 ? count : 128*1024 - p;
+			if (copy_to_user (buf,
+					  phys_to_virt (0xE0000 + p - 96*1024),
+					  copy_size))
+				return -EFAULT;
+			total_copy_size += copy_size;
+		}
+		return total_copy_size;
+	}
+#endif
 	if (p >= fix.smem_len)
 	    return 0;
 	if (count >= fix.smem_len)
@@ -396,6 +429,33 @@ fb_write(struct file *file, const char *buf, size_t count, loff_t *ppos)
 	    count = fix.smem_len - p;
 	    err = -ENOSPC;
 	}
+#ifdef CONFIG_PC9800
+	if (! strcmp( fix.id, "egc")) {
+		/* for PC-98x1 VRAM */
+		unsigned long total_copy_size = 0;
+		/* R,G,B plane */
+		if(p < 96*1024) {
+			unsigned long copy_size
+			    = count + p <= 96*1024 ? count : 96*1024 - p;
+			if (copy_from_user (phys_to_virt (0xA8000+p), buf,
+					    copy_size))
+				return -EFAULT;
+			count -= copy_size;
+			p += copy_size;
+			buf += copy_size;
+			total_copy_size += copy_size;
+		}
+		if(p >= 96*1024 && count > 0) {
+			unsigned long copy_size
+			    = count + p <= 128*1024 ? count : 128*1024 - p;
+			if (copy_from_user (phys_to_virt (0xE0000+p-96*1024),
+					    buf, copy_size))
+				return -EFAULT;
+			total_copy_size += copy_size;
+		}
+		return total_copy_size;
+	}
+#endif
 	if (count) {
 	    char *base_addr;
 

@@ -6,6 +6,7 @@
 #include <linux/mc146818rtc.h>
 #include <asm/io.h>
 
+#ifndef CONFIG_PC9800
 /*
  * We query CMOS about hard disks : it could be that we have a SCSI/ESDI/etc
  * controller that is BIOS compatible with ST-506, and thus showing up in our
@@ -80,7 +81,7 @@ void probe_cmos_for_drives (ide_hwif_t *hwif)
 	}
 #endif
 }
-
+#endif /* not NEC PC-9800 */
 
 #ifdef CONFIG_BLK_DEV_IDE
 

@@ -32,7 +32,9 @@ list-multi	:=
 KEYMAP   =defkeymap.o
 KEYBD    =pc_keyb.o
 CONSOLE  =console.o
+CONSOLEMAP=consolemap_deftbl.o
 SERIAL   =serial.o
+RTC	 =rtc.o
 
 ifeq ($(ARCH),s390)
   KEYMAP   =
@@ -122,12 +124,21 @@ ifneq ($(CONFIG_SUN_SERIAL),)
   SERIAL   =
 endif
 
+ifeq ($(CONFIG_PC9800),y)
+  FONTMAPFILE = pc9800.uni
+  RTC      = upd4990a.o
+endif
 
-obj-$(CONFIG_VT) += vt.o vc_screen.o consolemap.o consolemap_deftbl.o $(CONSOLE) selection.o
+obj-$(CONFIG_VT) += vt.o vc_screen.o consolemap.o $(CONSOLEMAP) $(CONSOLE) selection.o
 obj-$(CONFIG_SERIAL) += $(SERIAL)
 obj-$(CONFIG_SERIAL_21285) += serial_21285.o
 obj-$(CONFIG_SERIAL_SA1100) += serial_sa1100.o
 obj-$(CONFIG_SERIAL_AMBA) += serial_amba.o
+obj-$(CONFIG_SERIAL_CCU98) += ccu98.o generic_serial.o
+
+ifeq ($(CONFIG_PC9800),y)
+  KEYMAP = defkeymap_pc9800.o
+endif
 
 ifndef CONFIG_SUN_KEYBOARD
   obj-$(CONFIG_VT) += keyboard.o $(KEYMAP) $(KEYBD)
@@ -169,6 +180,8 @@ obj-$(CONFIG_ATIXL_BUSMOUSE) += atixlmouse.o
 obj-$(CONFIG_LOGIBUSMOUSE) += logibusmouse.o
 obj-$(CONFIG_PRINTER) += lp.o
 
+obj-$(CONFIG_PC9800_OLDLP)) += lp_old98.o
+
 ifeq ($(CONFIG_INPUT),y)
 obj-y += joystick/js.o
 endif
@@ -184,7 +197,7 @@ obj-$(CONFIG_AMIGAMOUSE) += amigamouse.o
 obj-$(CONFIG_ATARIMOUSE) += atarimouse.o
 obj-$(CONFIG_ADBMOUSE) += adbmouse.o
 obj-$(CONFIG_PC110_PAD) += pc110pad.o
-obj-$(CONFIG_RTC) += rtc.o
+obj-$(CONFIG_RTC) += $(RTC)
 obj-$(CONFIG_EFI_RTC) += efirtc.o
 ifeq ($(CONFIG_PPC),)
   obj-$(CONFIG_NVRAM) += nvram.o

@@ -13,7 +13,11 @@
 #ifndef SCSICAM_H
 #define SCSICAM_H
 #include <linux/kdev_t.h>
+#include <linux/config.h>
 extern int scsicam_bios_param (Disk *disk, kdev_t dev, int *ip);
 extern int scsi_partsize(struct buffer_head *bh, unsigned long capacity,
            unsigned int  *cyls, unsigned int *hds, unsigned int *secs);
+#ifdef CONFIG_PC9800
+extern int pc9800_scsi_bios_param (Disk *disk, kdev_t dev, int *ip);
+#endif
 #endif /* def SCSICAM_H */
